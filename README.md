@@ -63,7 +63,7 @@ Edit `.env` locally in your editor, not in GitHub, an issue, a screenshot or cha
 ```dotenv
 PORT=3100
 SMARTAPI_API_KEY=REPLACE_WITH_YOUR_OWN_API_KEY
-SMARTAPI_RELAY_ORIGIN=https://YOUR-APP.azurewebsites.net
+SMARTAPI_RELAY_ORIGIN=https://tradegrok-smartapi.YOUR_SUBDOMAIN.workers.dev
 ```
 
 | Variable | Purpose |
@@ -72,7 +72,7 @@ SMARTAPI_RELAY_ORIGIN=https://YOUR-APP.azurewebsites.net
 | `SMARTAPI_API_KEY` | Your SmartAPI app's API key. Required for login; keep it local. |
 | `SMARTAPI_RELAY_ORIGIN` | Your callback relay's public HTTPS origin, **without** a path, query or explicit port. Leave blank for disconnected exploration/development only. |
 
-Replace both placeholders before connecting. Restart `npm start` after changing configuration. Do not copy someone else's key or deployment URL. There is no client PIN, password, client code or TOTP-secret setting in TradeGrok: those belong in Angel One's hosted login.
+Replace both placeholders before connecting. Cloudflare is the recommended free HTTPS relay; you can instead set `SMARTAPI_RELAY_ORIGIN` to your own Azure App Service's exact HTTPS origin. Restart `npm start` after changing configuration. Do not copy someone else's key or deployment URL. There is no client PIN, password, client code or TOTP-secret setting in TradeGrok: those belong in Angel One's hosted login.
 
 ## Set up Angel One and SmartAPI
 
@@ -82,9 +82,56 @@ You need your own active [Angel One](https://www.angelone.in/) account with acce
 
 Sign in to the [SmartAPI developer portal](https://smartapi.angelone.in/) and open **MyApps**. Create/configure your own application and obtain its API key. Portal labels, account eligibility, API entitlements and any network/static-IP requirements can change: check the [official documentation](https://smartapi.angelone.in/docs) for your app type. A callback relay is **not** a proxy for quote/account requests and does not provide a static outbound IP for your computer.
 
+**Static-IP allowlisting is separate from the HTTPS Redirect URL.** Broker API requests originate from the computer running local TradeGrok, not the Cloudflare or Azure relay. If your app requires an IP allowlist, use that computer's **public outbound IPv4**, not `127.0.0.1`, a private LAN address, or the relay's IP. Check it from the same computer and network:
+
+```sh
+curl --fail --silent --show-error --ipv4 https://api.ipify.org
+```
+
+This reports your **current public IP**, not proof that it is static. Ask your ISP for a guaranteed static public IPv4 if the broker requires one. Dynamic addresses can change after reconnecting, switching networks or using a VPN. Free Cloudflare HTTPS does **not** provide a static outbound IP for local broker requests. After a network change, recheck your IP, update the broker allowlist if needed, and restart TradeGrok because its public-IP lookup is cached for the process. Do not hard-code a one-time lookup into customer configuration.
+
 ### 2. Deploy your public HTTPS callback relay
 
-Angel One registration requires a public HTTPS redirect URL; **do not register loopback or expose the local dashboard through a public tunnel**. The included relay is designed for an **Azure Linux App Service**. Only the relay goes to Azure; your keys, tokens, dashboard and financial database stay local.
+> **Recommended: Cloudflare Workers Free provides a public HTTPS callback for $0 within its free-plan limits.** Its included `workers.dev` address needs no purchased domain, certificate or paid tunnel. The Free plan includes **100,000 requests/day**; this callback-only relay needs no paid storage or database. Stay on Free and do not enable paid services to work around quotas.
+
+Angel One registration requires a public HTTPS redirect URL; **do not register loopback or expose the local dashboard through a public tunnel**. Choose **Cloudflare Workers** below or the collapsed **Azure App Service alternative**. Deploy only the stateless relay; your broker keys, tokens, dashboard and financial database stay local. Confirm SmartAPI accepts your chosen exact hostname. Free-tier hosting is not a business-critical availability guarantee.
+
+#### Cloudflare Workers (recommended, free HTTPS)
+
+1. Use your own Cloudflare account and the **Workers Free** plan. Select your `workers.dev` account subdomain in Workers & Pages. No domain purchase is required.
+2. In `wrangler.jsonc`, replace `YOUR_SUBDOMAIN` in `vars.PUBLIC_ORIGIN` with your actual subdomain. If you change `name`, update the first hostname component too. Set `vars.LOCAL_RETURN_ORIGIN` to `http://127.0.0.1:<PORT>` using your local port. These are nonsecret settings; never add broker keys or tokens. `PUBLIC_ORIGIN` must exactly match the deployed HTTPS origin, without a port/path.
+3. Keep `"observability": { "enabled": false }`, `"logpush": false` and `"preview_urls": false`. New Workers otherwise enable observability by default. Before real login, verify Workers Logs/invocation logs are disabled, with no traces, Tail Workers, Logpush/export integrations, logging proxies or request-capture tools attached. Do not use `wrangler tail` or dashboard live logs during real login: callback queries and response `Location` headers contain tokens.
+4. Use Wrangler 4 as deployment tooling only; it is not a TradeGrok runtime dependency:
+
+```sh
+npx wrangler@4 login
+# Package locally without deploying.
+npx wrangler@4 deploy --dry-run
+# Deploy after checking your account, hostname and logging settings.
+npx wrangler@4 deploy
+```
+
+Wrangler bundles only `server/cloudflare.js` and its imported relay/header/error helpers. No `.env`, database, private session, frontend, tests or runner is uploaded. Do not add assets, KV, R2, D1, service bindings or `nodejs_compat`; do not publish the whole folder with Pages or tunnel the dashboard.
+
+5. Check your actual HTTPS address:
+
+```sh
+curl --fail https://tradegrok-smartapi.YOUR_SUBDOMAIN.workers.dev/healthz
+# Expected: {"status":"ok"}
+```
+
+`/`, `/api/state`, bot/settings/emergency endpoints and local file paths must return `404`; non-GET callbacks must be rejected. Health does not prove a broker login works. Before real login, use synthetic tokens to check the fixed fragment return and rejection of replay/wrong-browser handoffs, without overwriting an active saved broker session.
+
+Register `https://tradegrok-smartapi.YOUR_SUBDOMAIN.workers.dev/auth/smartapi/callback` using your real subdomain, then follow step 3 below. A 403 indicates a wrong host or non-HTTPS request; do not weaken origin validation. A 500 from health indicates invalid/missing configuration. For `login_incomplete`, start a new login. If you change variables in Cloudflare's dashboard, also update `wrangler.jsonc` before deploying again. Quota failures require waiting/retrying, not automatic paid upgrades.
+
+`workers.dev` is intended for personal/hobby projects, not business-critical production. Cloudflare terminates TLS and processes incoming credentials: this is not end-to-end encryption against the hosting provider. Disabling application logging does not guarantee anything about provider-internal retention. The broker delivers tokens directly; the relay cannot substitute authorization codes or PKCE.
+
+References: [Workers Free pricing](https://developers.cloudflare.com/workers/platform/pricing/), [workers.dev addresses](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/), [Wrangler configuration](https://developers.cloudflare.com/workers/wrangler/configuration/) and [Workers Logs](https://developers.cloudflare.com/workers/observability/logs/workers-logs/).
+
+<details>
+<summary>Alternative: Azure App Service setup (Free F1)</summary>
+
+#### Azure Linux App Service
 
 1. Create/select your own Linux App Service with a supported Node.js runtime (**22+ for the relay; 24+ for the local dashboard**). Check current pricing, region availability, quotas and your subscription before creating resources. A Free F1 plan may be suitable where available, but can idle or hit quotas; no free availability or cost guarantee is implied.
 2. Note the app's actual default HTTPS hostname, including any generated suffix. In App Service environment settings, set `PUBLIC_ORIGIN=https://YOUR-APP.azurewebsites.net` and `LOCAL_RETURN_ORIGIN=http://127.0.0.1:3100`, replacing the hostname with the real one. `.env.azure.example` is a **nonsecret reference template**, not an automatically loaded cloud env file.
@@ -99,7 +146,7 @@ Build a relay-only ZIP from a clean checkout on macOS/Linux:
 # Refuses to overwrite an existing relay staging directory.
 mkdir .relay-build &&
 mkdir .relay-build/server &&
-cp server/azure.js server/azure-callback.js server/smartapi.js \
+cp server/azure.js server/azure-callback.js server/smartapi-relay.js \
   server/http.js server/broker.js .relay-build/server/ &&
 printf '%s\n' '{"name":"tradegrok-callback-relay","private":true,"type":"module","engines":{"node":">=22.0.0"},"scripts":{"start":"node server/azure.js"}}' \
   > .relay-build/package.json &&
@@ -129,15 +176,19 @@ curl --fail https://YOUR-APP.azurewebsites.net/healthz
 
 `/`, `/api/state` and local file paths should return `404`. Only `/healthz` and `/auth/smartapi/callback` are available. Health does not prove a broker login works.
 
+</details>
+
 ### 3. Register the redirect and connect locally
 
 In SmartAPI **MyApps**, register this exact **Redirect URL**, using your actual relay hostname:
 
 ```text
-https://YOUR-APP.azurewebsites.net/auth/smartapi/callback
+https://tradegrok-smartapi.YOUR_SUBDOMAIN.workers.dev/auth/smartapi/callback
 ```
 
 Set `SMARTAPI_RELAY_ORIGIN` to the **same origin without `/auth/smartapi/callback`**, and set that app's `SMARTAPI_API_KEY` in your local `.env`. Restart the local server.
+
+For Azure, substitute the exact HTTPS App Service hostname. To switch providers, deploy/check the new relay first, then update the SmartAPI Redirect URL and local `SMARTAPI_RELAY_ORIGIN` together, restart TradeGrok and start a new login. Only one relay is selected at a time; there is no automatic fallback that sends credentials to another host. Each relay has a fixed local return port; customers using different ports need their own deployment/configuration.
 
 1. Open **http://127.0.0.1:3100** and choose **Broker connection → Login with Angel One**.
 2. Complete the broker's hosted sign-in in the **same browser within five minutes**, keeping TradeGrok running. Enter your client credentials and any PIN/OTP/TOTP only on the official broker page. Do not paste a QR secret or token into TradeGrok.
@@ -156,7 +207,7 @@ sequenceDiagram
     participant Browser
     participant Local as Local TradeGrok
     participant Broker as Angel One
-    participant Relay as Azure HTTPS relay
+    participant Relay as Cloudflare or Azure HTTPS relay
     Browser->>Local: Start login
     Local-->>Browser: Hosted login URL + browser-bound cookie
     Browser->>Broker: Authenticate on broker page
@@ -168,7 +219,7 @@ sequenceDiagram
     Local->>Broker: Request holdings and positions
 ```
 
-The local server checks single-use state, a browser-bound HttpOnly cookie, the exact callback/Origin and a five-minute deadline. Azure is stateless: it redirects to a fixed loopback origin and has no token retrieval endpoint or database. The local landing page scrubs the token-bearing fragment before posting it back to the server. Never share a callback address, browser history, redirect header or network capture.
+The local server checks single-use state, a browser-bound HttpOnly cookie, the exact callback/Origin and a five-minute deadline. Both relays are stateless: they redirect to a fixed loopback origin and have no token retrieval endpoint or database. The local landing page scrubs the token-bearing fragment before posting it back to the server. Never share a callback address, browser history, redirect header or network capture.
 
 ## Configure a paper strategy
 
@@ -237,7 +288,7 @@ Before publishing your own changes, inspect `git diff --cached` and `git ls-file
 | Login disabled / not configured | Set your API key in local `.env` and restart. |
 | Loopback redirect rejected | Register your relay's public HTTPS callback, not `127.0.0.1`. |
 | Callback rejected / expired | Start a new attempt in the same browser within five minutes; use the exact `127.0.0.1` port and keep the server running. |
-| Relay unavailable | Check `/healthz`, startup, actual Azure hostname and environment settings; a free plan may idle. |
+| Relay unavailable | Check `/healthz`, your exact deployed hostname and provider settings. Cloudflare can hit free-plan quotas; Azure F1 can idle or hit quotas. |
 | Callback received but quotes unavailable | Select **Verify read-only connection**; callback receipt alone does not verify broker access. |
 | Account verification error | Check the displayed operation/status/code and broker service status. Successful HTTP alone is insufficient; `AB2001`/`AB1004` can indicate broker failures, not an empty portfolio. |
 | Quotes stale / market closed | Wait for eligible fresh exchange data; never replace it with made-up prices. |
@@ -259,6 +310,7 @@ public/                   Browser dashboard and licensed local font
 server/index.js           Loopback-only application entrypoint
 server/app.js             Local API and static assets
 server/smartapi.js         Hosted login, state and session handling
+server/smartapi-relay.js   Shared origin/token validation and fixed return
 server/angel.js            Read-only account and actual quote adapter
 server/history.js         Broker historical data and request handling
 server/engine.js           Paper execution and risk checks
@@ -267,13 +319,15 @@ server/market-calendar.js  Supported trading-session rules
 server/store.js            SQLite persistence
 server/session-file.js     Private daily token persistence
 server/analysis-log.js     Local strategy-decision logs
-server/azure.js            Relay-only cloud entrypoint
-server/azure-callback.js   Stateless HTTPS-to-loopback handoff
+server/cloudflare.js       Cloudflare Workers callback entrypoint
+wrangler.jsonc            Nonsecret Cloudflare deployment template
+server/azure.js            Alternative Azure relay entrypoint
+server/azure-callback.js   Azure request/transport validation
 tests/                    Synthetic fixtures and behavior tests
 docs/screenshots/         Credential-free demo screenshots
 data/                     Generated locally; never committed
 ```
 
-`npm start` is the local dashboard; `npm run start:azure` is the separately configured cloud relay. Do not interchange their deployment environments.
+`npm start` is the local dashboard. `npx wrangler@4 deploy` publishes only the Cloudflare relay; `npm run start:azure` starts the alternative, separately configured Azure relay. Do not interchange their deployment environments.
 
 The bundled font's [SIL Open Font License](public/fonts/OFL.txt) is retained. Angel One/SmartAPI names belong to their respective owners; this project is not an official broker product.

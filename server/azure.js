@@ -1,5 +1,5 @@
 import { azureConfig, createAzureCallback } from './azure-callback.js';
-import { smartApiCallbackPath } from './smartapi.js';
+import { smartApiCallbackPath } from './smartapi-relay.js';
 
 const config = azureConfig(process.env);
 const port = Number(process.env.PORT || 8080);

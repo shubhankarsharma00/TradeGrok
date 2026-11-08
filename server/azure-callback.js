@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { AppError } from './broker.js';
 import { securityHeaders } from './http.js';
-import { smartApiCallbackPath, smartApiOrigin, smartApiTokens } from './smartapi.js';
+import { smartApiCallbackPath, smartApiOrigin, smartApiRelayDestination } from './smartapi-relay.js';
 
 export function azureConfig(env) {
   const publicOrigin = smartApiOrigin(env.PUBLIC_ORIGIN);
@@ -30,21 +30,7 @@ export function createAzureCallback(config) {
       if (url.pathname !== smartApiCallbackPath) throw new AppError('Endpoint not found.', 404, 'NOT_FOUND');
       if (req.method !== 'GET') throw new AppError('SmartAPI relay requires GET.', 405);
       if (req.headers['x-forwarded-proto'] !== 'https') throw new AppError('HTTPS through Azure App Service is required.', 403, 'AZURE_HTTPS');
-      const states = url.searchParams.getAll('state');
-      if (states.length !== 1 || !/^[a-f0-9]{64}$/.test(states[0])) throw new AppError('Invalid SmartAPI relay state.', 400, 'SMARTAPI_STATE');
-      const fragment = new URLSearchParams({ state: states[0] });
-      try {
-        const { authToken, feedToken } = smartApiTokens(url.searchParams);
-        fragment.set('auth_token', authToken);
-        fragment.set('feed_token', feedToken);
-      } catch (error) {
-        if (!(error instanceof AppError)) throw error;
-        fragment.set('error', 'login_incomplete');
-      }
-      // Top-level navigation, not an HTTPS-page fetch to HTTP. Fragments never enter the local GET request.
-      const destination = new URL('/auth/smartapi/return', returnOrigin);
-      destination.hash = fragment.toString();
-      res.writeHead(303, { Location: destination.toString() });
+      res.writeHead(303, { Location: smartApiRelayDestination(url, returnOrigin) });
       res.end();
     } catch (error) {
       const known = error instanceof AppError;

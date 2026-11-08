@@ -7,18 +7,19 @@ import { Store } from '../server/store.js';
 import { AngelOne } from '../server/angel.js';
 import { createApp } from '../server/app.js';
 import { createAzureCallback } from '../server/azure-callback.js';
+import worker from '../server/cloudflare.js';
 import { SmartAPI, smartApiCallbackPath } from '../server/smartapi.js';
 
 const relayOrigin = 'https://callback.example.test';
-async function fixture(t, now = () => Date.now()) {
+async function fixture(t, now = () => Date.now(), provider = 'azure') {
   const store = new Store(':memory:');
   const smartapi = new SmartAPI({ apiKey: 'fixture-api-key', now });
   const { server } = createApp(store, new AngelOne(new SmartAPI()), { now, smartapi, smartapiRelayOrigin: relayOrigin });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
-  const cloud = createAzureCallback({ publicOrigin: relayOrigin, localReturnOrigin: base });
-  await new Promise(resolve => cloud.listen(0, '127.0.0.1', resolve));
-  t.after(async () => { await Promise.all([server, cloud].map(s => new Promise(resolve => s.close(resolve)))); store.close(); });
+  const cloud = provider === 'azure' ? createAzureCallback({ publicOrigin: relayOrigin, localReturnOrigin: base }) : null;
+  if (cloud) await new Promise(resolve => cloud.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { await Promise.all([server, cloud].filter(Boolean).map(s => new Promise(resolve => s.close(resolve)))); store.close(); });
   const initial = await (await fetch(`${base}/api/state`)).json();
   const post = (path, input, headers = {}) => fetch(`${base}${path}`, { method: 'POST', headers: {
     Origin: base, 'Content-Type': 'application/json', 'X-Tradegrok-CSRF': initial.csrf, ...headers
@@ -31,7 +32,10 @@ async function fixture(t, now = () => Date.now()) {
     assert.equal(url.searchParams.get('redirect_url'), `${relayOrigin}${smartApiCallbackPath}`);
     return { cookie, state: url.searchParams.get('state') };
   };
-  const relay = params => new Promise((resolve, reject) => {
+  const relay = params => provider === 'cloudflare'
+    ? Promise.resolve(worker.fetch(new Request(`${relayOrigin}${smartApiCallbackPath}?${new URLSearchParams(params)}`),
+      { PUBLIC_ORIGIN: relayOrigin, LOCAL_RETURN_ORIGIN: base }).headers.get('location'))
+    : new Promise((resolve, reject) => {
     const req = request(`http://127.0.0.1:${cloud.address().port}${smartApiCallbackPath}?${new URLSearchParams(params)}`,
       { headers: { Host: new URL(relayOrigin).host, 'X-Forwarded-Proto': 'https' } }, response => {
         response.resume(); resolve(response.headers.location);
@@ -60,8 +64,9 @@ async function landingScript(base, destination, cookie) {
   });
   return { result: await done, events };
 }
-test('exact local -> HTTPS relay -> fragment landing -> same-origin POST completes session in local TradeGrok', async t => {
-  const { base, store, smartapi, start, relay } = await fixture(t);
+for (const provider of ['azure', 'cloudflare']) {
+test(`${provider}: exact local -> HTTPS relay -> fragment landing -> same-origin POST completes session in local TradeGrok`, async t => {
+  const { base, store, smartapi, start, relay } = await fixture(t, () => Date.now(), provider);
   const { cookie, state } = await start();
   const destination = await relay({ state, auth_token: 'fixture-auth', feed_token: 'fixture-feed' });
   const landing = new URL(destination);
@@ -86,8 +91,8 @@ test('exact local -> HTTPS relay -> fragment landing -> same-origin POST complet
   for (const secret of ['fixture-auth', 'fixture-feed', 'fixture-api-key']) assert.ok(!JSON.stringify(dashboard).includes(secret));
   assert.equal((await landingScript(base, destination, cookie)).result, '/?smartapi=error', 'replay is rejected');
 });
-test('local completion rejects other browsers, missing/wrong state, malformed tokens and cross-origin POSTs', async t => {
-  const { smartapi, start, post } = await fixture(t);
+test(`${provider}: local completion rejects other browsers, missing/wrong state, malformed tokens and cross-origin POSTs`, async t => {
+  const { smartapi, start, post } = await fixture(t, () => Date.now(), provider);
   for (const kind of ['missing-cookie', 'wrong-cookie', 'wrong-state', 'missing-state', 'malformed-token', 'missing-feed', 'foreign-origin']) {
     const { cookie, state } = await start();
     const input = { state, auth_token: 'fixture-auth', feed_token: 'fixture-feed' };
@@ -104,9 +109,9 @@ test('local completion rejects other browsers, missing/wrong state, malformed to
     assert.equal(smartapi.session, null);
   }
 });
-test('duplicate fragment fields never POST and denied login or expiry never create a local session', async t => {
+test(`${provider}: duplicate fragment fields never POST and denied login or expiry never create a local session`, async t => {
   let now = 1000;
-  const { base, smartapi, start, relay } = await fixture(t, () => now);
+  const { base, smartapi, start, relay } = await fixture(t, () => now, provider);
   let attempt = await start();
   const duplicate = `${base}/auth/smartapi/return#state=${attempt.state}&state=${attempt.state}&auth_token=x&feed_token=y`;
   const result = await landingScript(base, duplicate, attempt.cookie);
@@ -121,3 +126,4 @@ test('duplicate fragment fields never POST and denied login or expiry never crea
   assert.equal((await landingScript(base, expired, attempt.cookie)).result, '/?smartapi=error');
   assert.equal(smartapi.session, null);
 });
+}

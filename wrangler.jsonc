@@ -1,0 +1,15 @@
+{
+  "name": "tradegrok-smartapi",
+  "main": "server/cloudflare.js",
+  "compatibility_date": "2026-11-08",
+  "workers_dev": true,
+  "preview_urls": false,
+  "logpush": false,
+  "observability": {
+    "enabled": false
+  },
+  "vars": {
+    "PUBLIC_ORIGIN": "https://tradegrok-smartapi.YOUR_SUBDOMAIN.workers.dev",
+    "LOCAL_RETURN_ORIGIN": "http://127.0.0.1:3100"
+  }
+}

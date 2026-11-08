@@ -10,6 +10,6 @@
     "start:azure": "node server/azure.js",
     "dev": "node --watch --env-file-if-exists=.env server/index.js",
     "test": "node --test tests/*.test.js",
-    "check": "node --check server/index.js && node --check server/app.js && node --check server/angel.js && node --check server/smartapi.js && node --check server/session-file.js && node --check server/analysis-log.js && node --check server/history.js && node --check server/backtest.js && node --check server/market-calendar.js && node --check server/http.js && node --check server/azure.js && node --check server/azure-callback.js && node --check server/engine.js && node --check server/broker.js && node --check server/store.js && node --check public/app.js && node --check public/smartapi-return.js"
+    "check": "node --check server/index.js && node --check server/app.js && node --check server/angel.js && node --check server/smartapi.js && node --check server/smartapi-relay.js && node --check server/session-file.js && node --check server/analysis-log.js && node --check server/history.js && node --check server/backtest.js && node --check server/market-calendar.js && node --check server/http.js && node --check server/azure.js && node --check server/azure-callback.js && node --check server/cloudflare.js && node --check server/engine.js && node --check server/broker.js && node --check server/store.js && node --check public/app.js && node --check public/smartapi-return.js"
   }
 }
