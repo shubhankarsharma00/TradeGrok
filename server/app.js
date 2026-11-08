@@ -7,8 +7,8 @@ import { Engine, metrics, validateBot, validateRisk, istDay } from './engine.js'
 import { presets, exitPresets, instruments, isNseSymbol } from './store.js';
 import { SmartAPI, smartApiCallbackPath, smartApiCookie, smartApiCookiePath, smartApiOrigin } from './smartapi.js';
 import { body, securityHeaders } from './http.js';
-import { SmartHistory } from './history.js';
-import { createBacktest, sessionDates } from './backtest.js';
+import { SmartHistory, downloadHistory } from './history.js';
+import { createBacktest, sessionDates, createBotBacktest, historyDates } from './backtest.js';
 import { executionWindow } from './market-calendar.js';
 
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
@@ -75,7 +75,7 @@ export function createApp(store, broker, { now = () => Date.now(), smartapi = ne
           equity: store.equity(), quotes: [...engine.quotes.values()], presets, exitPresets, instruments,
           metrics: metrics(store, engine.quotes, now()), connection: broker.status(), smartapi: smartapi.status(callbackUrl), smartapiConfigWritable: Boolean(configFile),
           account: broker.account, engine: { busy: engine.busy, lastTick: engine.lastTick, error: engine.error, marketWindows: [...new Set(store.bots().map(bot => bot.symbol))].map(symbol => executionWindow(now(), symbol)), analysisLog: { ...(analysisLog ? analysisLog.status(now()) : { enabled: false }), error: engine.loggingError } },
-          backtest: latest ? { id: latest.id, createdAt: latest.createdAt, status: latest.status, evaluated: latest.sessions.evaluated, summary: latest.result?.summary || null, coverage: latest.coverage } : null,
+          backtest: latest ? { id: latest.id, createdAt: latest.createdAt, status: latest.status, evaluated: latest.sessions.evaluated, summary: latest.result?.summary || null, coverage: latest.coverage, bot: latest.snapshot.bot, interval: latest.dataset.request.interval, loggingError: latest.loggingError ?? null, cache: latest.dataset.cache ?? null } : null,
           backtestReplaySupported: true,
           execution: 'paper', liveEnabled: false, serverTime: new Date(now()).toISOString()
         });
@@ -93,6 +93,11 @@ export function createApp(store, broker, { now = () => Date.now(), smartapi = ne
         if (!latest) throw new AppError('No historical backtest has been downloaded yet.', 404, 'BACKTEST_NOT_FOUND');
         return json(200, latest);
       }
+      if (req.method === 'GET' && url.pathname === '/api/backtests/history') {
+        const latest = store.latestBacktest();
+        if (!latest) throw new AppError('No historical dataset has been downloaded yet.', 404, 'BACKTEST_NOT_FOUND');
+        return json(200, latest.dataset);
+      }
       if (req.method === 'GET' && url.pathname === '/api/instruments') {
         const query = (url.searchParams.get('search') || '').trim().toUpperCase();
         if (query.length < 2 || !isNseSymbol(query)) throw new AppError('Type at least two characters of an NSE ticker to search.', 400, 'SMARTAPI_INSTRUMENT');
@@ -103,12 +108,57 @@ export function createApp(store, broker, { now = () => Date.now(), smartapi = ne
           return json(200, { instruments: matches.slice(0, 50).map(({ symbol, name }) => ({ symbol, name })), more: matches.length > 50 });
         } finally { searching = false; }
       }
+      if (req.method === 'POST' && url.pathname === '/api/backtest') {
+        const input = await body(req);
+        if (Object.keys(input).some(key => !['botId', 'symbol', 'days', 'reuseLatest', 'downloadOnly'].includes(key)) ||
+            ['reuseLatest', 'downloadOnly'].some(key => Object.hasOwn(input, key) && typeof input[key] !== 'boolean') ||
+            (Object.hasOwn(input, 'days') && (!Number.isInteger(input.days) || input.days < 1 || input.days > 7)) ||
+            (Object.hasOwn(input, 'symbol') && !isNseSymbol(input.symbol)) ||
+            (Object.hasOwn(input, 'botId') && typeof input.botId !== 'string')) {
+          throw new AppError('Select a saved bot, valid NSE ticker and 1-7 calendar days. Replay/download flags must be boolean; candles are fixed at one minute.', 400, 'BACKTEST_SCOPE');
+        }
+        if (backtesting) throw new AppError('A historical download/replay is already running.', 409, 'BACKTEST_BUSY');
+        const cached = input.reuseLatest ? store.latestBacktest() : null;
+        if (input.reuseLatest && !cached) throw new AppError('Download one-minute history before replaying.', 404, 'BACKTEST_NOT_FOUND');
+        if (cached && cached.sessions.intervalMinutes !== 1) throw new AppError('Saved legacy history uses five-minute candles. Download one-minute history first.', 422, 'BACKTEST_SCOPE');
+        if (cached && input.days !== undefined && input.days !== cached.sessions.days) throw new AppError('Saved history has a different day window. Download again to change it.', 409, 'BACKTEST_RANGE');
+        const original = input.botId !== undefined ? store.bot(input.botId) : cached?.snapshot.bot;
+        if (!original) throw new AppError('Select an existing configured bot to backtest.', 404, 'BACKTEST_BOT');
+        const symbol = input.symbol ?? (cached ? cached.snapshot.bot.symbol : original.symbol);
+        const bot = { ...original, symbol };
+        const settings = cached && input.botId === undefined ? cached.snapshot.settings : store.settings();
+        validateBot(bot, settings);
+        if (cached && cached.dataset.instrument.symbol !== `${symbol}-EQ`) throw new AppError('Saved history belongs to another ticker. Download history for this ticker first.', 409, 'BACKTEST_INSTRUMENT');
+        const sessions = cached ? cached.sessions : historyDates(now(), input.days ?? 7);
+        backtesting = true;
+        try {
+          const download = cached ? { ...cached.dataset, data: cached.dataset.candles.map(bar => [bar.at, bar.open, bar.high, bar.low, bar.close, bar.volume]) }
+            : input.downloadOnly ? await history.download(symbol, sessions.all, { interval: 'ONE_MINUTE', schedules: sessions.schedules })
+            : await downloadHistory(history, store, symbol, sessions);
+          const run = createBotBacktest(download, bot, settings, sessions, { createdAt: new Date(now()).toISOString(), replayedFrom: cached?.id, expectedSha256: cached?.dataset.sha256, downloadOnly: input.downloadOnly });
+          if (analysisLog && run.result) {
+            try { analysisLog.append(run.result.analysis); }
+            catch (error) {
+              run.loggingError = 'Backtest analysis file write failed. Complete decision records remain in the saved backtest; check local log permissions and disk space.';
+              console.error(run.loggingError);
+            }
+          }
+          store.transaction(() => {
+            store.saveBacktest(run);
+            store.event(run.status === 'blocked' || run.loggingError ? 'error' : 'info', `Backtest ${run.status}: ${bot.name} on ${symbol}, one-minute history. ${run.loggingError ?? 'Active paper portfolio unchanged.'}`, bot.id, run.createdAt);
+          });
+          if (run.status === 'blocked') return json(422, { error: 'Incomplete or zero-volume continuous history. Actual dataset saved; no performance fabricated or older days substituted.', code: 'BACKTEST_COVERAGE', backtest: run });
+          if (run.loggingError) return json(503, { error: run.loggingError, code: 'ANALYSIS_LOG', backtest: run });
+          return json(200, run);
+        } finally { backtesting = false; }
+      }
       if (req.method === 'POST' && url.pathname === '/api/backtest/safe-play') {
         const input = await body(req);
         if (Object.keys(input).some(key => key !== 'reuseLatest') || (Object.hasOwn(input, 'reuseLatest') && typeof input.reuseLatest !== 'boolean')) throw new AppError('This backtest supports only saved safe play, seven completed sessions and five-minute candles; reuseLatest must be boolean.', 400, 'BACKTEST_SCOPE');
         if (backtesting) throw new AppError('A historical backtest is already running.', 409, 'BACKTEST_BUSY');
         const cached = input.reuseLatest ? store.latestBacktest() : null;
         if (input.reuseLatest && !cached) throw new AppError('No saved historical dataset exists to replay.', 404, 'BACKTEST_NOT_FOUND');
+        if (cached && cached.dataset.request.interval !== 'FIVE_MINUTE') throw new AppError('This legacy route only replays five-minute datasets. Use the general backtest controls for one-minute history.', 422, 'BACKTEST_SCOPE');
         const bots = store.bots().filter(bot => bot.name.toLowerCase() === 'safe play');
         if (bots.length !== 1 || bots[0].preset !== 'sma' || bots[0].symbol !== 'RELIANCE') throw new AppError('Exactly one saved safe play SMA bot on RELIANCE is required; other instruments need verified session schedules.', 422, 'BACKTEST_BOT');
         if (!input.reuseLatest && (bots[0].exitPreset ?? 'protective') !== 'protective') throw new AppError('The safe play historical backtest supports protective stop/target exits only, not the selected exit strategy.', 422, 'BACKTEST_EXIT');

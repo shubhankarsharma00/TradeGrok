@@ -17,6 +17,7 @@
     <nav aria-label="Main navigation">
       <button data-page="overview" class="nav-item active"><span aria-hidden="true">▦</span>Overview</button>
       <button data-page="bots" class="nav-item"><span aria-hidden="true">⌘</span>My bots<span id="bot-count" class="nav-count">1</span></button>
+      <button data-page="bots" data-section="bot-bin" class="nav-item"><span aria-hidden="true">▥</span>Bot bin</button>
       <button data-page="orders" class="nav-item"><span aria-hidden="true">⇄</span>Order journal</button>
       <button data-page="broker" class="nav-item"><span aria-hidden="true">◇</span>Broker connection</button>
       <button data-page="settings" class="nav-item"><span aria-hidden="true">⚙</span>Risk & settings</button>
@@ -51,6 +52,11 @@
       <p class="form-error" id="bot-error" role="alert"></p>
       <div class="dialog-actions"><button type="button" class="button secondary" data-dismiss>Cancel</button><button type="submit" class="button primary">Save paper bot <span>↗</span></button></div>
     </form>
+  </dialog>
+  <dialog id="backtest-results-dialog" aria-labelledby="backtest-results-title">
+    <div class="dialog-heading"><h2 id="backtest-results-title" tabindex="-1">Backtest results</h2><button type="button" class="icon-button" data-action="backtest-results-close" aria-label="Close backtest results">×</button></div>
+    <div id="backtest-results-content"></div>
+    <div class="dialog-actions"><button type="button" class="button secondary" data-action="backtest-results-close">Close results</button></div>
   </dialog>
 </body>
 </html>

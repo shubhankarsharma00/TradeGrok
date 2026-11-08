@@ -20,13 +20,29 @@ A local-first trading desk for Indian markets. Connect Angel One SmartAPI, view 
 | Independent exits | Stop/target, moving-average reversal, support breakdown, holding-period, scheduled and time-plus-performance rules. |
 | Shared guardrails | Per-trade modelled loss, daily loss plus open risk, position cap, cash checks and daily entry limits. |
 | Order journal and analysis | Inspect simulated fills and per-cycle decision records, including blocked conditions. |
-| Historical replay | A deliberately scoped RELIANCE SMA backtest using actual five-minute broker candles. |
+| Historical replay | Any configured bot and chosen NSE cash ticker, using your Angel One account's one-minute candles from the last 1–7 calendar days; saved history, decision logs, net P/L and win/loss report. |
 
-Dashboard notices have expandable details: select a headline to expand or collapse it. Routine notices start collapsed; critical errors and the entry lock start expanded. Selections survive automatic refreshes and page changes within the current browser session; changed notice content resets to its default.
+The bot-bin hint, Muhurat-window notices and stale/unavailable valuation notices have an **×** dismissal button. Removing one hides it across automatic refreshes and navigation in the current tab; changed content or a page reload shows it again. The bot bin stays accessible from the sidebar. Other dashboard notices have expandable details: select a headline to expand or collapse it. Routine notices start collapsed; critical errors and the entry lock start expanded. Expansion choices survive automatic refreshes and page changes; changed content resets to its default.
 
 Broker connection keeps login, verification, status and the callback URL visible. Setup instructions, session details and paper-execution information are collapsed by default; verification failures stay expanded.
 
 The interface is vanilla JavaScript and CSS, with locally hosted Silkscreen headings. The server uses Node's built-in HTTP and SQLite modules: **no third-party runtime dependencies, frontend build or Python SDK required.**
+
+### Download history and backtest
+
+In **My bots → Historical backtesting**, choose a configured bot, an NSE cash ticker (uppercase, without `NSE:` or `-EQ`), and **1–7 calendar days**. Candles are fixed at **one minute**. The current IST date counts toward the limit; incomplete sessions, weekends and holidays are excluded, never replaced by older sessions. Downloads use your current Angel One SmartAPI login and resolve exactly one `NSE` / `-EQ` instrument; no synthetic data, derivatives or broker orders.
+
+Use **Run** to fetch and replay together. Complete, checksum-verified one-minute sessions already saved for that ticker are reused automatically, even from another bot's run or a different date window; only missing sessions are downloaded. For example, Monday's last-seven-calendar-day window shares six calendar dates with Sunday's window: common completed trading sessions are reused and only new completed sessions are fetched. Weekends and holidays have no candles to download. Fully cached windows work without a current login. The popup reports reused/downloaded session counts and offers **Download saved candles** as JSON. **Run selected bot on saved ticker history** uses the exact saved window with the selected bot's current settings; **Replay original settings** reproduces the saved snapshot. Entry/support price levels are not automatically rescaled for a different ticker.
+
+The legacy `/api/backtest` request with `downloadOnly: true` still fetches fresh history without replaying; it can replace a corrupted cache window after signing in. There is no separate history-only button in the UI.
+
+Backtest guidance, assumptions and entry/exit strategy descriptions are grouped under **Learn more about backtest** at the end of **My bots**, collapsed by default. Its open/closed state survives page refresh polling and navigation within the current page load. Setup controls and operational alerts remain visible.
+
+All four entry presets and all six exit presets are supported. Completed one-minute closes replace polling samples; signals fill at the next same-session continuous open. Stops/targets use actual open gaps and intrabar extremes, with stop first if both touch. Timed and performance rules use simulated entry time and trading-session counts. Sizing uses saved risk limits and fresh initial simulated capital, not current paper cash or real buying power. One entry per bot per IST day; positions may carry overnight and any remainder is liquidated at the final continuous close.
+
+Replay conservatively uses the common continuous window **09:15–15:15 IST** from 3 August 2026 (09:15–15:30 earlier). The verified 8 November 2026 Muhurat window is **14:20–15:15 IST**. Later prints and auction marks stay in the download but are not traded; this deliberately excludes valid later non-CAS trading rather than guessing a ticker's auction eligibility. Only verified 2026 calendar windows are supported. Missing or zero-volume continuous candles save a blocked dataset without fabricating a result.
+
+Results open in a separate popup after a download or replay; use **View latest results** to reopen them, and **Close results**, **×**, or Escape to return to the setup controls. The popup contains net P/L, return, trades, wins, losses, breakevens, win rate (N/A for no trades), fees, slippage, close-equity drawdown, candle coverage and downloads. Blocked runs and logging failures remain explicit in the popup. Costs model 0.05% adverse slippage and 0.05% fees per side, not actual Angel One brokerage/taxes; trade P/L includes both entry and exit fees. Download the full report for simulated fills, equity, assumptions and per-bar decision records. The normal bot log viewer also shows **Backtest**-labelled records on each historical date; file-write failures are surfaced and the full records remain in the saved report. Active bot settings, cash, positions and the paper order journal are unchanged. Legacy safe-play five-minute reports remain downloadable.
 
 ## Quick start
 
@@ -75,6 +91,8 @@ SMARTAPI_RELAY_ORIGIN=https://tradegrok-smartapi.YOUR_SUBDOMAIN.workers.dev
 | Variable | Purpose |
 | --- | --- |
 | `PORT` | Local HTTP port, default `3100`; must be an integer from `1024` to `65535`. |
+| `TRADEGROK_DATA_DIR` | Optional existing local data directory for the SQLite portfolio, private saved session and analysis logs. Defaults to this checkout's `data/`. Use an absolute path when restarting from another checkout; stop the old server first. |
+| `TRADEGROK_ENV_FILE` | Optional local `.env` path used by the broker settings save form. Defaults to this checkout's `.env`. When loading another configuration via Node's `--env-file-if-exists`, set this to that same absolute path so saves and restarts use the same file. |
 | `SMARTAPI_API_KEY` | Your SmartAPI app's API key. Required for login; keep it local. |
 | `SMARTAPI_RELAY_ORIGIN` | Your callback relay's public HTTPS origin, **without** a path, query or explicit port. Leave blank for disconnected exploration/development only. |
 

@@ -356,3 +356,257 @@ test('coverage failure persists actual available candles but no summary and neve
   assert.equal(run.dataset.candles.length, 656);
   assert.equal(store.orders().length, 0);
 });
+
+function oneMinuteHistory(symbol, days, options) {
+  const data = days.flatMap(day => {
+    const start = Date.parse(`${day}T${options.schedules[day].open}:00+05:30`);
+    return Array.from({ length: options.schedules[day].bars }, (_, index) =>
+      [new Date(start + index * 60000 + 19800000).toISOString().replace('.000Z', '+05:30'), 100, 101, 99.5, 100, 1000]);
+  });
+  return { source: 'fixture broker history', fetchedAt: '2026-11-08T06:30:00Z',
+    instrument: { exchange: 'NSE', symbol: `${symbol}-EQ`, token: '123' }, request: { interval: options.interval }, data };
+}
+
+test('generalized API downloads bounded one-minute history, replays any bot on saved ticker and isolates the paper portfolio', async t => {
+  const now = () => Date.parse('2026-11-08T12:00:00+05:30');
+  const calls = [], logs = [];
+  const history = { download: async (...args) => { calls.push(args); return oneMinuteHistory(...args); } };
+  const analysisLog = { status: () => ({ enabled: true }), append: records => logs.push(...records) };
+  const { store, post, base } = await fixture(t, undefined, { now, history, analysisLog });
+  const original = store.bots()[0];
+  const first = { ...original, preset: 'dip', level: 101, exitPreset: 'scheduled', exitSessions: 1, exitTime: '09:30' };
+  store.saveBot(first);
+  const input = { botId: first.id, symbol: 'M&M', days: 7 };
+  const unchanged = JSON.stringify({ settings: store.settings(), bots: store.bots(), orders: store.orders() });
+  assert.equal((await post('/api/backtest', input, { 'X-Tradegrok-CSRF': '' })).status, 403);
+  for (const invalid of [{ ...input, days: 8 }, { ...input, days: '7' }, { ...input, interval: 'FIVE_MINUTE' }, { ...input, symbol: 'NSE:INFY' }, { ...input, reuseLatest: 'yes' }]) {
+    assert.equal((await post('/api/backtest', invalid)).status, 400);
+  }
+  assert.equal((await post('/api/backtest', { ...input, botId: 'missing' })).status, 404);
+  assert.equal(calls.length, 0);
+  const downloaded = await post('/api/backtest', { ...input, downloadOnly: true });
+  assert.equal(downloaded.status, 200);
+  const dataset = await downloaded.json();
+  assert.equal(dataset.status, 'downloaded');
+  assert.equal(dataset.result, null);
+  assert.equal(calls[0][0], 'M&M');
+  assert.deepEqual(calls[0][1], ['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06']);
+  assert.equal(calls[0][2].interval, 'ONE_MINUTE');
+  assert.equal((await (await fetch(`${base}/api/backtests/history`)).json()).candles.length, 1800);
+  assert.equal(logs.length, 0);
+  const response = await post('/api/backtest', { botId: first.id, reuseLatest: true });
+  assert.equal(response.status, 200);
+  const run = await response.json();
+  assert.equal(run.snapshot.bot.symbol, 'M&M');
+  assert.equal(run.result.summary.trades, 5);
+  assert.equal(run.result.summary.losses, 5);
+  assert.equal(run.result.summary.wins, 0);
+  assert.equal(run.result.analysis.length, 1800);
+  assert.equal(logs.length, 1800);
+  assert.ok(logs.every(record => record.backtestId === run.id && record.execution === 'backtest'));
+  assert.equal(JSON.stringify({ settings: store.settings(), bots: store.bots(), orders: store.orders() }), unchanged);
+  assert.equal(calls.length, 1, 'saved replay makes no broker call');
+  store.saveBot({ ...first, budget: 15000 });
+  const originalReplay = await (await post('/api/backtest', { reuseLatest: true })).json();
+  assert.equal(originalReplay.snapshot.bot.budget, first.budget);
+  const currentReplay = await (await post('/api/backtest', { botId: first.id, reuseLatest: true })).json();
+  assert.equal(currentReplay.snapshot.bot.budget, 15000);
+  assert.equal((await post('/api/backtest', { ...input, symbol: 'INFY', reuseLatest: true })).status, 409);
+  assert.equal((await post('/api/backtest', { botId: first.id, days: 1, reuseLatest: true })).status, 409);
+  const state = await (await fetch(`${base}/api/state`)).json();
+  assert.equal(state.backtest.summary.trades, 5);
+  assert.equal(state.backtest.bot.symbol, 'M&M');
+  assert.equal(state.backtest.interval, 'ONE_MINUTE');
+});
+
+test('generalized download blocks incomplete history, reports logging failure and releases the busy lock', async t => {
+  let missing = true;
+  const history = { download: async (...args) => {
+    const download = oneMinuteHistory(...args);
+    if (missing) download.data.shift();
+    return download;
+  } };
+  const analysisLog = { status: () => ({ enabled: true }), append() { throw new Error('disk full'); } };
+  const { store, post } = await fixture(t, undefined, { now: () => Date.parse('2026-11-08T12:00:00+05:30'), history, analysisLog });
+  const bot = store.bots()[0];
+  store.saveBot({ ...bot, preset: 'sma', level: 0 });
+  const input = { botId: bot.id, symbol: 'INFY' };
+  assert.equal((await post('/api/backtest', input)).status, 422);
+  assert.equal(store.latestBacktest().result, null);
+  assert.equal(store.latestBacktest().dataset.candles.length, 1799);
+  missing = false;
+  const response = await post('/api/backtest', input);
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).code, 'ANALYSIS_LOG');
+  assert.equal(store.latestBacktest().result.analysis.length, 1800);
+  assert.match(store.latestBacktest().loggingError, /write failed/);
+  assert.equal(store.orders().length, 0);
+});
+
+test('backtest snapshot survives edits during a download and concurrent requests cannot overlap', async t => {
+  let release, started;
+  const downloading = new Promise(resolve => { started = resolve; });
+  const history = { download: (...args) => { started(); return new Promise(resolve => { release = () => resolve(oneMinuteHistory(...args)); }); } };
+  const { store, post } = await fixture(t, undefined, { now: () => Date.parse('2026-11-08T12:00:00+05:30'), history });
+  const bot = { ...store.bots()[0], preset: 'sma', level: 0 };
+  store.saveBot(bot);
+  const pending = post('/api/backtest', { botId: bot.id, symbol: 'INFY' });
+  await downloading;
+  assert.equal((await post('/api/backtest', { botId: bot.id, symbol: 'TCS' })).status, 409);
+  store.saveBot({ ...bot, budget: 15000 });
+  release();
+  const response = await pending;
+  assert.equal(response.status, 200);
+  const run = await response.json();
+  assert.equal(run.snapshot.bot.budget, bot.budget);
+  assert.equal(run.snapshot.bot.symbol, 'INFY');
+  assert.equal(store.bot(bot.id).budget, 15000);
+  assert.equal(store.orders().length, 0);
+});
+
+test('rolling seven-calendar-day windows reuse common sessions across bots and tickers without requiring login for a full cache', async t => {
+  let clock = Date.parse('2026-06-07T18:00:00+05:30'), online = true;
+  const calls = [];
+  const history = { download: async (...args) => {
+    assert.ok(online, 'a fully cached run must not contact the broker');
+    calls.push(args);
+    return { ...oneMinuteHistory(...args), fetchedAt: new Date(clock).toISOString() };
+  } };
+  const { store, post, base } = await fixture(t, undefined, { now: () => clock, history });
+  const first = { ...store.bots()[0], preset: 'sma', level: 0 };
+  const second = { ...first, id: 'other-cache-bot', name: 'Other rules', budget: 15000 };
+  store.saveBot(first); store.saveBot(second);
+  const initial = await post('/api/backtest', { botId: first.id, symbol: 'INFY', days: 7 });
+  assert.equal(initial.status, 200);
+  const sunday = await initial.json();
+  assert.deepEqual(sunday.dataset.cache.reusedSessions, []);
+  assert.deepEqual(sunday.dataset.cache.downloadedSessions, ['2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05']);
+  assert.equal((await post('/api/backtest', { botId: first.id, symbol: 'TCS', days: 7 })).status, 200);
+  assert.equal(calls.length, 2, 'another ticker never reuses INFY candles');
+  clock = Date.parse('2026-06-08T18:00:00+05:30');
+  const response = await post('/api/backtest', { botId: second.id, symbol: 'INFY', days: 7 });
+  assert.equal(response.status, 200);
+  const monday = await response.json();
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls[2][1], ['2026-06-08']);
+  assert.deepEqual(monday.dataset.cache.reusedSessions, ['2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05']);
+  assert.deepEqual(monday.dataset.cache.downloadedSessions, ['2026-06-08']);
+  assert.equal(monday.dataset.cache.cachedSources[0].id, sunday.id);
+  assert.equal(monday.snapshot.bot.id, second.id);
+  assert.equal(monday.snapshot.bot.budget, second.budget);
+  assert.equal(monday.dataset.candles.length, 1875);
+  assert.ok(monday.dataset.candles.every(bar => !bar.at.startsWith('2026-06-01')));
+  assert.equal(monday.result.analysis.length, 1875);
+  online = false;
+  const cached = await post('/api/backtest', { botId: first.id, symbol: 'INFY', days: 7 });
+  assert.equal(cached.status, 200);
+  const offline = await cached.json();
+  assert.deepEqual(offline.dataset.cache.downloadedSessions, []);
+  assert.equal(offline.dataset.cache.reusedSessions.length, 5);
+  assert.equal(offline.dataset.fetchedAt, monday.dataset.fetchedAt, 'cached data is not marked freshly fetched');
+  assert.equal(offline.dataset.sha256, monday.dataset.sha256);
+  assert.equal(calls.length, 3);
+  const state = await (await fetch(`${base}/api/state`)).json();
+  assert.deepEqual(state.backtest.cache, offline.dataset.cache);
+  assert.equal(store.orders().length, 0);
+});
+
+test('blocked history contributes only complete sessions and missing groups never redownload intervening cached days', async t => {
+  let missing = true;
+  const calls = [];
+  const history = { download: async (...args) => {
+    calls.push(args);
+    const result = oneMinuteHistory(...args);
+    if (missing) result.data = result.data.filter(row => !['2026-06-02', '2026-06-04'].includes(row[0].slice(0, 10)));
+    return result;
+  } };
+  const { store, post } = await fixture(t, undefined, { now: () => Date.parse('2026-06-07T18:00:00+05:30'), history });
+  const bot = { ...store.bots()[0], preset: 'sma', level: 0 };
+  store.saveBot(bot);
+  const input = { botId: bot.id, symbol: 'INFY', days: 7 };
+  assert.equal((await post('/api/backtest', input)).status, 422);
+  const blocked = store.latestBacktest();
+  assert.equal(blocked.result, null);
+  missing = false;
+  const response = await post('/api/backtest', input);
+  assert.equal(response.status, 200);
+  const run = await response.json();
+  assert.deepEqual(calls.slice(1).map(call => call[1]), [['2026-06-02'], ['2026-06-04']]);
+  assert.deepEqual(run.dataset.cache.reusedSessions, ['2026-06-01', '2026-06-03', '2026-06-05']);
+  assert.deepEqual(run.dataset.cache.downloadedSessions, ['2026-06-02', '2026-06-04']);
+  assert.equal(run.dataset.cache.cachedSources[0].id, blocked.id);
+  assert.equal(run.dataset.candles.length, 1875);
+  assert.ok(run.coverage.every(day => day.complete));
+});
+
+test('automatic reuse rejects checksum corruption and conflicting instrument tokens before combining data', async t => {
+  let token = '123';
+  const calls = [];
+  const history = { download: async (...args) => {
+    calls.push(args);
+    const data = oneMinuteHistory(...args);
+    data.instrument.token = token;
+    return data;
+  } };
+  const { store, post } = await fixture(t, undefined, { now: () => Date.parse('2026-06-05T18:00:00+05:30'), history });
+  const bot = { ...store.bots()[0], preset: 'sma', level: 0 };
+  store.saveBot(bot);
+  const input = { botId: bot.id, symbol: 'INFY' };
+  assert.equal((await post('/api/backtest', { ...input, days: 1, downloadOnly: true })).status, 200);
+  const saved = store.latestBacktest();
+  token = '456';
+  const conflict = await post('/api/backtest', { ...input, days: 7 });
+  assert.equal(conflict.status, 422);
+  assert.equal((await conflict.json()).code, 'BACKTEST_INSTRUMENT');
+  assert.equal(store.latestBacktest().id, saved.id);
+  store.saveBacktest({ ...saved, id: 'corrupt-cache', dataset: { ...saved.dataset, sha256: 'invalid' } });
+  const corrupt = await post('/api/backtest', { ...input, days: 1 });
+  assert.equal(corrupt.status, 422);
+  assert.equal((await corrupt.json()).code, 'BACKTEST_CANDLES');
+  assert.equal(calls.length, 2, 'corruption is surfaced before another broker request');
+  assert.equal(store.latestBacktest().result, null);
+  token = '123';
+  assert.equal((await post('/api/backtest', { ...input, days: 1, downloadOnly: true })).status, 200);
+  assert.equal((await post('/api/backtest', { ...input, days: 1 })).status, 200);
+  assert.equal(calls.length, 3, 'the retained download-only API can repair the cache, then normal backtests reuse it');
+});
+
+test('a narrower cached window excludes previously retained premarket prints before its new opening', async t => {
+  let calls = 0;
+  const history = { download: async (...args) => {
+    calls++;
+    const data = oneMinuteHistory(...args);
+    data.data.push(['2026-06-03T09:00:00+05:30', 100, 101, 99.5, 100, 1000]);
+    return data;
+  } };
+  const { store, post } = await fixture(t, undefined, { now: () => Date.parse('2026-06-07T18:00:00+05:30'), history });
+  const bot = { ...store.bots()[0], preset: 'sma', level: 0 };
+  store.saveBot(bot);
+  const input = { botId: bot.id, symbol: 'INFY' };
+  assert.equal((await post('/api/backtest', { ...input, days: 7 })).status, 200);
+  assert.equal(store.latestBacktest().outsideSession.length, 1);
+  const response = await post('/api/backtest', { ...input, days: 5 });
+  assert.equal(response.status, 200);
+  const run = await response.json();
+  assert.equal(calls, 1);
+  assert.equal(run.dataset.candles[0].at, '2026-06-03T09:15:00+05:30');
+  assert.equal(run.dataset.candles.length, 1125);
+  assert.equal(run.dataset.cache.reusedSessions.length, 3);
+});
+
+test('unexpected fresh trading-session candles remain in the blocked dataset rather than being silently dropped', async t => {
+  const history = { download: async (...args) => {
+    const data = oneMinuteHistory(...args);
+    data.data.push(['2026-06-06T10:00:00+05:30', 100, 101, 99.5, 100, 1000]);
+    return data;
+  } };
+  const { store, post } = await fixture(t, undefined, { now: () => Date.parse('2026-06-10T18:00:00+05:30'), history });
+  const bot = { ...store.bots()[0], preset: 'sma', level: 0 };
+  store.saveBot(bot);
+  const response = await post('/api/backtest', { botId: bot.id, symbol: 'INFY', days: 7 });
+  assert.equal(response.status, 422);
+  const run = store.latestBacktest();
+  assert.equal(run.result, null);
+  assert.deepEqual(run.unexpectedSessions, ['2026-06-06']);
+  assert.ok(run.dataset.candles.some(bar => bar.at.startsWith('2026-06-06')));
+});

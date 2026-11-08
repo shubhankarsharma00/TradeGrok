@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 
 function fixture() {
-  const notices = [];
+  const notices = [], listeners = {};
   const nodes = {
     '#main': { innerHTML: '' }, '#page-label': {}, '#clock': {},
     '#bot-form': { addEventListener() {} }
@@ -13,7 +13,7 @@ function fixture() {
     document: {
       querySelector: selector => nodes[selector],
       querySelectorAll: selector => selector === 'details[data-notice-id]' ? notices : [],
-      addEventListener() {}
+      addEventListener: (event, callback) => { (listeners[event] ??= []).push(callback); }
     },
     location: { search: '' }, URLSearchParams,
     setInterval() {}, setTimeout() {}, clearTimeout() {},
@@ -30,28 +30,43 @@ function fixture() {
     smartapi: { status: 'disconnected' }
   };
   runInContext('state = snapshot; page = "orders"', context);
-  return { context, notices, nodes, run: code => runInContext(code, context) };
+  return {
+    context, notices, nodes, run: code => runInContext(code, context),
+    dismiss(id) {
+      let removed = false, focused = false;
+      const notice = { remove() { removed = true; }, nextElementSibling: { querySelector: () => ({ focus() { focused = true; } }) } };
+      const button = { dataset: { dismissNotice: id }, closest: () => notice };
+      listeners.click[0]({ target: { closest: () => button } });
+      return { removed, focused };
+    }
+  };
 }
 
-test('routine trade notices use collapsed native disclosures with visible headlines and complete details', () => {
+test('requested trade notices have dismissal buttons instead of collapsible disclosures', () => {
   const f = fixture();
   const html = f.run('banners()');
-  assert.equal((html.match(/<details /g) ?? []).length, 3);
-  assert.doesNotMatch(html, / open>/);
-  assert.match(html, /<summary>NSE:DIVISLAB Muhurat paper window closed\.<\/summary>/);
+  assert.equal((html.match(/data-removable-notice=/g) ?? []).length, 3);
+  assert.equal((html.match(/data-dismiss-notice=/g) ?? []).length, 3);
+  assert.doesNotMatch(html, /<details|<summary/);
+  assert.match(html, />NSE:DIVISLAB Muhurat paper window closed\.<\/strong>/);
   assert.match(html, /14:20-15:15 IST \(conservative CAS cutoff\)\. No auction\/post-close fills\./);
   assert.match(html, /No automatic liquidation at close; existing exit rules remain unchanged\./);
-  assert.match(html, /<summary>Equity and unrealised P&amp;L use last known SmartAPI prices\.<\/summary>/);
+  assert.match(html, />Equity and unrealised P&amp;L use last known SmartAPI prices\.<\/strong>/);
   assert.match(html, /These are not live values\. No fills on stale prices\./);
   assert.doesNotMatch(html, /RELIANCE/);
   assert.match(f.run('botsPage()'), /data-notice-id="paper-data"><summary><span class="pill mint">SMARTAPI MARKET DATA/);
+  assert.match(f.run('botsPage()'), /data-removable-notice="bot-bin-help"/);
+  assert.match(f.run('botsPage()'), /Bot bin \(0\)/);
+  const index = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  assert.match(index, /data-page="bots" data-section="bot-bin" class="nav-item"/);
 });
 
-test('missing saved quotes keep their distinct unavailable notice collapsible', () => {
+test('missing saved quotes keep their distinct unavailable notice removable', () => {
   const f = fixture();
   f.context.snapshot.metrics.unavailablePositions = 1;
   const html = f.run('banners()');
-  assert.match(html, /data-notice-id="stale-positions"><summary>Some open positions have no saved valid SmartAPI quote\.<\/summary>/);
+  assert.match(html, /data-removable-notice="stale-positions"/);
+  assert.match(html, />Some open positions have no saved valid SmartAPI quote\.<\/strong>/);
   assert.match(html, /Equity and unrealised P&amp;L are unavailable until prices are received\. No fills on stale prices\./);
   assert.doesNotMatch(html, /use last known SmartAPI prices/);
 });
@@ -72,20 +87,20 @@ test('critical notices start expanded and untrusted notice content is escaped', 
   assert.doesNotMatch(html, /<script>|<img /);
 });
 
-test('expanded and collapsed selections survive rerenders and navigation independently', () => {
+test('remaining collapsible notices preserve expansion independently of removable notices', () => {
   const f = fixture();
   f.context.snapshot.settings.emergency = true;
-  f.run('renderPage()');
+  f.run('page = "bots"; renderPage()');
   f.notices.push(
-    { dataset: { noticeId: 'market-window:DIVISLAB' }, open: true },
+    { dataset: { noticeId: 'paper-data' }, open: true },
     { dataset: { noticeId: 'entry-lock' }, open: false }
   );
   f.run('renderPage()');
-  assert.match(f.nodes['#main'].innerHTML, /data-notice-id="market-window:DIVISLAB" open>/);
+  assert.match(f.nodes['#main'].innerHTML, /data-notice-id="paper-data" open>/);
   assert.match(f.nodes['#main'].innerHTML, /data-notice-id="entry-lock"><summary>/);
-  assert.match(f.nodes['#main'].innerHTML, /data-notice-id="stale-positions"><summary>/);
-  f.run('page = "bots"; renderPage()');
-  assert.match(f.nodes['#main'].innerHTML, /data-notice-id="market-window:DIVISLAB" open>/);
+  assert.match(f.nodes['#main'].innerHTML, /data-removable-notice="stale-positions"/);
+  f.run('page = "orders"; renderPage()');
+  assert.match(f.nodes['#main'].innerHTML, /data-removable-notice="market-window:DIVISLAB"/);
   f.notices.length = 0;
   f.run('page = "orders"; renderPage()');
   assert.match(f.nodes['#main'].innerHTML, /data-notice-id="entry-lock"><summary>/);
@@ -96,20 +111,45 @@ test('changed errors reopen and changed market windows reset without losing othe
   f.context.snapshot.engine.error = 'First error';
   f.run('renderPage()');
   f.notices.push(
-    { dataset: { noticeId: 'market-data' }, open: false },
-    { dataset: { noticeId: 'market-window:DIVISLAB' }, open: true },
-    { dataset: { noticeId: 'stale-positions' }, open: true }
+    { dataset: { noticeId: 'market-data' }, open: false }
   );
+  f.dismiss('market-window:DIVISLAB');
+  f.dismiss('stale-positions');
   f.context.snapshot.engine.error = 'New error';
   f.context.snapshot.engine.marketWindows[0].open = true;
   f.run('renderPage()');
   const html = f.nodes['#main'].innerHTML;
   assert.match(html, /data-notice-id="market-data" open>/);
-  assert.match(html, /data-notice-id="market-window:DIVISLAB"><summary>NSE:DIVISLAB Muhurat paper window open/);
-  assert.match(html, /data-notice-id="stale-positions" open>/);
+  assert.match(html, /data-removable-notice="market-window:DIVISLAB"/);
+  assert.match(html, /NSE:DIVISLAB Muhurat paper window open/);
+  assert.doesNotMatch(html, /data-removable-notice="stale-positions"/);
   f.context.snapshot.settings.emergency = false;
   f.context.snapshot.engine.error = null;
   f.context.snapshot.engine.marketWindows = [];
   f.context.snapshot.metrics.stalePositions = 0;
   assert.equal(f.run('banners()').trim(), '');
+});
+
+test('dismissal removes only its notice and survives refresh/navigation without changing bot state', () => {
+  const f = fixture();
+  f.run('page = "bots"; renderPage()');
+  const before = JSON.stringify(f.context.snapshot);
+  assert.deepEqual(f.dismiss('market-window:DIVISLAB'), { removed: true, focused: true });
+  f.run('renderPage()');
+  assert.doesNotMatch(f.nodes['#main'].innerHTML, /data-removable-notice="market-window:DIVISLAB"/);
+  assert.match(f.nodes['#main'].innerHTML, /data-removable-notice="market-window:NIFTYBEES"/);
+  f.dismiss('bot-bin-help');
+  f.dismiss('stale-positions');
+  f.run('page = "orders"; renderPage(); page = "bots"; renderPage()');
+  for (const id of ['market-window:DIVISLAB', 'bot-bin-help', 'stale-positions']) {
+    assert.equal(f.nodes['#main'].innerHTML.includes(`data-removable-notice="${id}"`), false);
+  }
+  assert.equal(JSON.stringify(f.context.snapshot), before);
+  f.context.snapshot.deletedBots = [{ id: 'removed-bot' }];
+  f.run('renderPage()');
+  assert.match(f.nodes['#main'].innerHTML, /data-removable-notice="bot-bin-help"/);
+  assert.match(f.nodes['#main'].innerHTML, /Bot bin \(1\)/);
+  f.context.snapshot.metrics.unavailablePositions = 1;
+  f.run('renderPage()');
+  assert.match(f.nodes['#main'].innerHTML, /Some open positions have no saved valid SmartAPI quote/);
 });
