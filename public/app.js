@@ -5,7 +5,7 @@ const integer = value => new Intl.NumberFormat('en-IN', { maximumFractionDigits:
 const date = value => value ? new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(value)) : 'Not checked yet';
 let state;
 const smartApiResult = new URLSearchParams(location.search).get('smartapi');
-let page = smartApiResult ? 'broker' : 'overview';
+let page = smartApiResult || location.hash === '#broker' ? 'broker' : 'overview';
 if (smartApiResult) history.replaceState(null, '', '/');
 let refreshing = null;
 let toastTimer;
@@ -14,6 +14,8 @@ let symbolSearchRevision = 0;
 let logView = null;
 let logRevision = 0;
 const noticeStates = new Map();
+let onboardingStep = smartApiResult ? 3 : 0;
+let onboardingOpen = false;
 const pages = { overview: 'Overview', bots: 'My bots', bin: 'Bot bin', orders: 'Order journal', broker: 'Broker connection', settings: 'Risk & settings', logs: 'Bot logs' };
 
 async function api(path, input) {
@@ -159,28 +161,73 @@ function backtestPanel() {
     ${run && state.backtestReplaySupported === true ? '<button class="button secondary" data-action="backtest-replay">Replay saved candles and original settings</button>' : ''}
     <p class="form-help">Standalone replay funded by saved initial paper capital, not real account buying power. SMA resets each day; overnight positions carry through the excluded auction, then any remainder is simulated closed at the final continuous close (15:15 IST), not the official auction close. Same-bar conflicts choose the stop. Not a tick-level replay or prediction.</p></section>`;
 }
+function brokerOnboarding() {
+  const labels = ['Angel One account', 'Cloudflare HTTPS', 'SmartAPI & .env', 'Login & verify'];
+  const relayConfigured = state.smartapi.callbackUrl.startsWith('https://');
+  const relayOrigin = relayConfigured ? new URL(state.smartapi.callbackUrl).origin : 'https://tradegrok-smartapi.YOUR_SUBDOMAIN.workers.dev';
+  const localOrigin = location.origin || 'http://127.0.0.1:3100';
+  const localPort = new URL(localOrigin).port || '3100';
+  const reference = (url, text) => `<a href="${url}" target="_blank" rel="noreferrer">${text} ↗</a>`;
+  const snippet = (title, content) => `<div class="setup-code"><span>${title}</span><pre tabindex="0" aria-label="${title}"><code>${escape(content)}</code></pre></div>`;
+  const steps = [
+    `<h3 id="setup-title" tabindex="-1">Set up your Angel One account</h3>
+    <p class="muted">Already have an active account? Skip to step 2.</p>
+    <ol class="setup-steps">
+      <li><strong>Sign up with Angel One</strong><p>Choose Open Demat Account on the website or app. Verify your mobile and email, then complete KYC with PAN, Aadhaar / accepted address proof and bank details. Follow the video verification and e-sign prompts.</p></li>
+      <li><strong>Wait for activation</strong><p>Confirm you can sign in and have your client ID ready. Follow Angel One's OTP / TOTP setup if prompted.</p></li>
+    </ol><p class="feed-note">${reference('https://www.angelone.in/', 'Open Angel One')} · ${reference('https://www.angelone.in/knowledge-center/demat-account/how-to-open-demat-account', 'Official account-opening guide')} · ${reference('https://www.angelone.in/knowledge-center/demat-account/how-to-complete-kyc-easily', 'KYC documents & verification')}</p>`,
+    `<h3 id="setup-title" tabindex="-1">Deploy the Cloudflare HTTPS relay</h3>
+    <ol class="setup-steps">
+      <li><strong>Sign in to Cloudflare</strong><p>In Workers &amp; Pages, choose a workers.dev subdomain on Workers Free. No domain purchase or tunnel needed.</p></li>
+      <li><strong>Edit wrangler.jsonc in this repository</strong><p>Replace YOUR_SUBDOMAIN below. Keep <code>main: server/cloudflare.js</code> and match LOCAL_RETURN_ORIGIN to your local dashboard port.</p>${snippet('Worker variables (inside vars)', `"PUBLIC_ORIGIN": "${relayOrigin}",\n"LOCAL_RETURN_ORIGIN": "${localOrigin}"`)}</li>
+      <li><strong>Deploy from the repository root</strong><p>Keep <code>observability.enabled: false</code>, <code>logpush: false</code> and <code>preview_urls: false</code>. Disable Workers Logs and request tracing; do not use live logs during login.</p>${snippet('Deploy the existing relay', 'npx wrangler@4 login\nnpx wrangler@4 deploy --dry-run\nnpx wrangler@4 deploy')}</li>
+      <li><strong>Check HTTPS</strong><p>Use your actual deployed hostname. Expect <code>{"status":"ok"}</code>; <code>/</code> and <code>/api/state</code> must return 404.</p>${snippet('Check HTTPS health', `curl --fail ${relayOrigin}/healthz`)}</li>
+    </ol><div class="notice warning">Deploy only the included relay, never .env or the dashboard. Never tunnel this local dashboard.</div>
+    <p class="feed-note">${reference('https://dash.cloudflare.com/', 'Cloudflare dashboard')} · ${reference('https://developers.cloudflare.com/workers/get-started/guide/', 'Deployment docs')}</p>`,
+    `<h3 id="setup-title" tabindex="-1">Create your SmartAPI app and configure .env</h3>
+    <ol class="setup-steps">
+      <li><strong>Create an app in SmartAPI</strong><p>Sign in → MyApps → Create App. Select access for account data, quotes and historical candles.</p></li>
+      <li><strong>Set the Redirect URL</strong><p>Use your deployed hostname below. TradeGrok has no order-postback endpoint; do not use this callback as a postback.</p>${snippet(relayConfigured ? 'Configured Redirect URL' : 'Redirect URL template — replace YOUR_SUBDOMAIN', `${relayOrigin}/auth/smartapi/callback`)}</li>
+      <li><strong>Edit your local .env</strong><p>In the repository root, copy <code>.env.example</code> to <code>.env</code> only if .env is missing. Add your app's API key, not its secret key. Use the relay origin without the callback path.</p>${snippet('Local .env — replace placeholders', `PORT=${localPort}\nSMARTAPI_API_KEY=REPLACE_WITH_YOUR_OWN_API_KEY\nSMARTAPI_RELAY_ORIGIN=${relayOrigin}`)}<p>Keep .env private and out of Git. Do not add passwords or TOTP secrets.</p></li>
+      <li><strong>Check any IP allowlist and restart</strong><p>If required by your SmartAPI app, allowlist this computer's static public IPv4 (ask your ISP). Cloudflare HTTPS does not provide a static outbound IP. This command reports your current IP only:</p>${snippet('Check current public IPv4', 'curl --fail --silent --show-error --ipv4 https://api.ipify.org')}<p>Restart with <code>npm start</code>. PORT must match the relay's LOCAL_RETURN_ORIGIN. After a network change, recheck the allowlist and restart.</p></li>
+    </ol><div class="setup-checks" aria-label="Detected local configuration"><span class="pill ${state.smartapi.configured ? 'mint' : 'amber'}">API KEY: ${state.smartapi.configured ? 'LOADED' : 'MISSING'}</span><span class="pill ${relayConfigured ? 'mint' : 'amber'}">HTTPS RELAY: ${relayConfigured ? 'CONFIGURED' : 'MISSING'}</span><button class="text-button" data-action="retry">Recheck local configuration</button></div>
+    <p class="form-help">Checks show local configuration, not deployment health or broker access.</p>
+    <p class="feed-note">${reference('https://smartapi.angelone.in/', 'Open SmartAPI')} · ${reference('https://smartapi.angelone.in/docs', 'SmartAPI docs')}</p>`,
+    `<h3 id="setup-title" tabindex="-1">Sign in, then verify read-only access</h3>
+    <ol class="setup-steps">
+      <li><strong>Login with Angel One</strong><p>Open <a href="${escape(localOrigin)}/#broker">${escape(localOrigin)}</a> (not localhost). <button class="text-button" data-action="smartapi-login" ${state.smartapi.configured && relayConfigured ? '' : 'disabled'}>Click here to test Angel One login</button>. Keep the server running; finish in this browser within five minutes. Enter credentials and OTP / TOTP only on Angel One.</p>${state.smartapi.configured && relayConfigured ? '' : '<p>Complete step 3 to enable login.</p>'}</li>
+      <li><strong>Verify the connection</strong><p>On return, choose Verify read-only connection below. Callback received means tokens arrived, not that the account was verified.</p></li>
+    </ol><div class="setup-checks"><span class="pill ${state.connection.status === 'connected' ? 'mint' : 'amber'}">${state.connection.status === 'connected' ? 'READ-ONLY ACCOUNT VERIFIED' : 'ACCOUNT NOT VERIFIED'}</span></div>`
+  ];
+  return `<details id="broker-onboarding" class="panel onboarding-panel"${onboardingOpen ? ' open' : ''}>
+    <summary class="setup-summary"><div><h2 id="onboarding-title">Broker setup guide</h2><p class="muted">Account, HTTPS and API configuration.</p></div><span class="setup-disclosure">Show / hide guide</span></summary>
+    <div class="setup-progress"><span class="pill outlined">STEP ${onboardingStep + 1} OF 4</span></div>
+    <nav class="setup-nav" aria-label="Broker setup steps">${labels.map((label, index) => `<button class="setup-step ${index === onboardingStep ? 'active' : ''}" data-setup-step="${index}"${index === onboardingStep ? ' aria-current="step"' : ''}><span>${index + 1}</span>${label}</button>`).join('')}</nav>
+    <div class="setup-content">${steps[onboardingStep]}</div>
+    <div class="setup-actions"><button class="button secondary" data-setup-step="${onboardingStep - 1}" ${onboardingStep === 0 ? 'disabled' : ''}>Back</button>${onboardingStep < 3 ? `<button class="button primary" data-setup-step="${onboardingStep + 1}">Next: ${labels[onboardingStep + 1]} <span>→</span></button>` : '<button class="button secondary" data-setup-step="0">Review from the start</button>'}</div>
+  </details>`;
+}
 function brokerPage() {
   const c = state.connection;
   const account = state.account;
   const relayConfigured = state.smartapi.callbackUrl.startsWith('https://');
   const table = (items, kind) => `<div class="table-scroll"><table><thead><tr><th>Instrument</th><th>Quantity</th><th>Average cost</th>${kind === 'positions' ? '<th>Realised P&amp;L</th>' : ''}</tr></thead><tbody>${items.map(row => `<tr><td><strong>${escape(row.symbol)}</strong></td><td>${escape(row.quantity)}</td><td>${typeof row.averagePrice === 'number' ? rupees(row.averagePrice) : 'Unavailable'}</td>${kind === 'positions' ? `<td>${typeof row.realisedPnl === 'number' ? rupees(row.realisedPnl) : 'Unavailable'}</td>` : ''}</tr>`).join('')}</tbody></table></div>`;
-  return `${heading('Your account. Your keys.', 'Angel One read-only account access and Angel One hosted-login callback setup.', false)}
+  return `${heading('Broker connection', 'Connect Angel One for real market data. Execution stays paper-only.', false)}
+    ${brokerOnboarding()}
     ${smartApiResult === 'error' ? '<div class="notice danger" role="alert">SmartAPI callback rejected or login incomplete. Start a new Angel One login below; complete it within five minutes in this browser.</div>' : ''}
-    <section class="panel connection-panel"><div class="section-heading"><h2>Angel One SmartAPI</h2><span class="pill ${state.smartapi.status === 'callback_received' ? 'mint' : 'amber'}">${escape(state.smartapi.status.replaceAll('_', ' '))}</span></div>
-    <p>${escape(state.smartapi.message)}</p><p>${relayConfigured ? 'Register this exact HTTPS Redirect URL in SmartAPI MyApps' : 'Local development callback'}: <code>${escape(state.smartapi.callbackUrl)}</code></p>
-    <div class="notice ${relayConfigured ? 'subtle' : 'warning'}">${relayConfigured ? 'The HTTPS relay returns your login to this local TradeGrok instance. Keep TradeGrok running and complete login in this browser within five minutes. The relay does not persist tokens.' : 'Angel One requires a public HTTPS Redirect URL. Configure SMARTAPI_RELAY_ORIGIN using the Azure or Cloudflare instructions in README.md; do not publish this local trading dashboard.'}</div>
-    <p class="form-help">Set SMARTAPI_API_KEY in .env locally and restart. Login opens Angel One, where you enter your credentials. Returned auth/feed tokens never enter dashboard state, logs, or the database. Verify the account below: SmartAPI prices load automatically, even with bots paused. Start paper bots explicitly. Live orders are not enabled.</p>
+    <div class="broker-grid"><section class="panel connection-panel"><div class="section-heading"><h2>Angel One SmartAPI</h2><span class="pill ${state.smartapi.status === 'callback_received' ? 'mint' : 'amber'}">${escape(state.smartapi.status.replaceAll('_', ' '))}</span></div>
+    <p class="form-help">${relayConfigured ? 'SmartAPI Redirect URL' : 'Local callback (HTTPS setup required)'}: <code>${escape(state.smartapi.callbackUrl)}</code></p>
+    ${collapsibleNotice('broker-login-info', relayConfigured ? 'subtle' : 'warning', relayConfigured ? 'Login instructions' : 'Setup required', `<p>${escape(state.smartapi.message)}</p><p>${relayConfigured ? 'Keep TradeGrok running and finish login in this browser within five minutes. Enter credentials only on Angel One.' : 'Set SMARTAPI_API_KEY and SMARTAPI_RELAY_ORIGIN in your local .env, then restart. Use the setup guide above; never expose this dashboard publicly.'}</p><p>After login, verify read-only account access. Callback receipt alone does not verify your account.</p>`)}
     <button class="button primary" data-action="smartapi-login" ${state.smartapi.configured ? '' : 'disabled'}>${relayConfigured ? 'Login with Angel One' : 'Local development login'}</button>
     <button class="button secondary" data-action="smartapi-disconnect">Clear local SmartAPI session</button>
-    <p class="form-help">Received: ${date(state.smartapi.receivedAt)}. ${state.smartapi.persisted ? 'Saved locally for today; survives restarts. ' : ''}${state.smartapi.restored ? 'Restored after restart; verify account access again. ' : ''}Local retention ends at midnight IST. Clear local SmartAPI session also deletes the saved file; this does not log out or revoke tokens at Angel One.</p></section>
-    <div class="broker-grid"><section class="panel connection-panel"><div class="section-heading"><div class="broker-brand"><span class="broker-mark" aria-hidden="true">↗</span><div><h2>Account verification</h2><p class="muted">Angel One SmartAPI · Read-only</p></div></div><span class="pill ${c.status === 'connected' ? 'mint' : 'amber'}">${escape(c.status.replaceAll('_', ' '))}</span></div>
-    <div class="notice ${c.status === 'connected' ? 'subtle' : 'warning'}">${escape(c.message)}</div>
+    ${collapsibleNotice('broker-session-info', 'subtle', 'Local session details', `<p>Received: ${date(state.smartapi.receivedAt)}. ${state.smartapi.persisted ? 'Saved locally for today; survives restarts. ' : ''}${state.smartapi.restored ? 'Restored after restart; verify account access again. ' : ''}Expires at midnight IST.</p><p>Clearing the local session deletes its saved file, but does not log out or revoke tokens at Angel One.</p>`)}</section>
+    <section class="panel connection-panel"><div class="section-heading"><div class="broker-brand"><span class="broker-mark" aria-hidden="true">↗</span><div><h2>Account verification</h2><p class="muted">Read-only access</p></div></div><span class="pill ${c.status === 'connected' ? 'mint' : 'amber'}">${escape(c.status.replaceAll('_', ' '))}</span></div>
+    ${collapsibleNotice('broker-verification-info', c.status === 'error' ? 'danger' : c.status === 'connected' ? 'subtle' : 'warning', c.status === 'error' ? 'Verification failed' : 'Verification details', escape(c.message), c.status === 'error')}
     <div class="risk-row"><span>Last verified</span><strong>${date(c.checkedAt)} IST</strong></div><div class="risk-row"><span>Session expiry</span><strong>${c.expiresAt ? `${date(c.expiresAt)} IST` : 'Midnight IST'}</strong></div><div class="risk-row"><span>Execution</span><strong>Paper fills only</strong></div>
-    <button class="button primary" data-action="connect">${c.status === 'connected' ? 'Refresh real account' : 'Verify read-only connection'} ↗</button><p class="form-help">Only account holdings and cash-segment positions are requested. No order is placed, changed, or cancelled.</p></section>
-    <section class="panel"><h2>Connect in three steps</h2><ol class="setup-steps"><li><strong>Configure your SmartAPI app</strong><p>Set your key in the local <code>SMARTAPI_API_KEY</code> environment variable and register the HTTPS redirect above in <a href="https://smartapi.angelone.in" target="_blank" rel="noreferrer">SmartAPI MyApps ↗</a>. Never put secrets in chat.</p></li><li><strong>Login &amp; verify</strong><p>Login above in this browser, then choose Verify read-only connection. Account snapshots stay separate from paper cash and positions.</p></li><li><strong>Run your paper strategies</strong><p>SmartAPI is already the only market-data source. Prices load for configured instruments even while bots are paused. Start bots individually; authentication and stale-data failures block fills.</p></li></ol></section></div>
-    <div class="notice warning"><strong>Execution stays paper-only.</strong> Angel One supplies actual account snapshots, quotes and historical candles. No broker order is placed, changed or cancelled; unattended live trading is not enabled.</div>
+    <button class="button primary" data-action="connect">${c.status === 'connected' ? 'Refresh real account' : 'Verify read-only connection'} ↗</button></section></div>
+    ${collapsibleNotice('broker-safety-info', 'warning', 'Paper execution only', 'Angel One provides holdings, cash-segment positions, quotes and historical candles. No broker order is placed, changed or cancelled. Real account snapshots are separate from paper cash. Start each paper bot explicitly after reviewing risk settings.')}
     ${account ? `<section class="panel account-panel"><div class="section-heading"><h2>Real Angel One holdings</h2><span class="pill mint">REAL ACCOUNT SNAPSHOT</span></div><p class="muted">Fetched ${date(account.checkedAt)} IST. ${c.status !== 'connected' ? 'Connection is not currently verified; this is a historical snapshot.' : 'Refresh explicitly to update.'} Separate from your paper portfolio.</p>${account.holdings.length ? table(account.holdings, 'holdings') : '<div class="empty compact"><p>Angel One returned no holdings for this account.</p></div>'}</section>
-    <section class="panel account-panel"><div class="section-heading"><h2>Real cash-segment positions</h2><span class="pill mint">REAL ACCOUNT SNAPSHOT</span></div>${account.positions.length ? table(account.positions, 'positions') : '<div class="empty compact"><p>Angel One returned no cash-segment positions.</p></div>'}</section>` : '<section class="panel empty"><span class="empty-symbol">◇</span><h3>No real account data yet</h3><p>Verify your server-side token to fetch your actual Angel One holdings. We never show mock holdings as real.</p></section>'}
+    <section class="panel account-panel"><div class="section-heading"><h2>Real cash-segment positions</h2><span class="pill mint">REAL ACCOUNT SNAPSHOT</span></div>${account.positions.length ? table(account.positions, 'positions') : '<div class="empty compact"><p>Angel One returned no cash-segment positions.</p></div>'}</section>` : '<section class="panel empty"><span class="empty-symbol">◇</span><h3>No account data yet</h3><p>Login and verify to see your holdings and positions.</p></section>'}
     <p class="feed-note">Official reference: <a href="https://smartapi.angelone.in/docs" target="_blank" rel="noreferrer">Angel One SmartAPI documentation ↗</a></p>`;
 }
 function settingsPage() {
@@ -196,6 +243,8 @@ function settingsPage() {
     <div class="notice subtle">Entry lock pauses new entries, not exit monitoring. Limits apply to new entries; lowering limits does not resize or close existing positions. Runs only while the local server is awake.</div></section></div>`;
 }
 function renderPage() {
+  const guide = $('#broker-onboarding');
+  if (guide) onboardingOpen = guide.open;
   document.querySelectorAll('details[data-notice-id]').forEach(notice => {
     const saved = noticeStates.get(notice.dataset.noticeId);
     if (saved) saved.open = notice.open;
@@ -325,6 +374,13 @@ document.addEventListener('click', async event => {
   const target = event.target.closest('button');
   if (!target) return;
   if (target.dataset.dismiss !== undefined) return $('#bot-dialog').close();
+  if (target.dataset.setupStep !== undefined) {
+    const step = Number(target.dataset.setupStep);
+    if (!Number.isInteger(step) || step < 0 || step > 3) return;
+    onboardingStep = step; renderPage();
+    $('#setup-title').focus();
+    return;
+  }
   if (target.dataset.page) {
     page = target.dataset.page; renderPage(); window.scrollTo({ top: 0, behavior: 'instant' }); return;
   }
