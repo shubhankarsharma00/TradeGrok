@@ -227,6 +227,8 @@ The local server checks single-use state, a browser-bound HttpOnly cookie, the e
 
 Choose **My bots → Create bot**, or **Configure** on a paused bot without an open position. Search with at least two ticker characters after login, then choose an exact NSE cash `-EQ` result. Enter the bare ticker, such as `RELIANCE` or `M&M`, not `NSE:` or `-EQ`.
 
+Use **Move to bin** on a paused bot without an open paper position to remove it from the active workspace. Close any held paper position first so exit monitoring is not lost. Removed bots stop polling and no longer count toward the 12-bot limit. **My bots → Bot bin → Logs** keeps their saved, date-filtered analysis reviewable; paper orders, cash accounting and daily risk history are preserved across restarts. The bin does not permanently erase bots or provide a restore action.
+
 ![Paper bot configuration dialog](docs/screenshots/bot-configuration.png)
 
 | Entry preset | Trigger |

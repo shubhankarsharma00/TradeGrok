@@ -14,7 +14,7 @@ let symbolSearchRevision = 0;
 let logView = null;
 let logRevision = 0;
 const noticeStates = new Map();
-const pages = { overview: 'Overview', bots: 'My bots', orders: 'Order journal', broker: 'Broker connection', settings: 'Risk & settings', logs: 'Bot logs' };
+const pages = { overview: 'Overview', bots: 'My bots', bin: 'Bot bin', orders: 'Order journal', broker: 'Broker connection', settings: 'Risk & settings', logs: 'Bot logs' };
 
 async function api(path, input) {
   const response = await fetch(path, input === undefined ? { cache: 'no-store' } : {
@@ -96,7 +96,8 @@ function botCard(bot) {
     <p class="bot-message">${escape(bot.message)}</p>
     <div class="bot-actions"><button class="button ${bot.status === 'running' ? 'secondary' : 'primary'} small" data-action="${bot.status === 'running' ? 'pause' : 'start'}" data-id="${bot.id}" ${state.settings.emergency && bot.status !== 'running' ? 'disabled' : ''}>${bot.status === 'running' ? 'Ⅱ Pause' : '▷ Start bot'}</button>
     ${position ? `<button class="button secondary small" data-action="close" data-id="${bot.id}" ${hasFreshQuote && exitWindowOpen(bot.symbol) ? '' : 'disabled'} title="${hasFreshQuote ? escape(state.engine.marketWindows?.find(item => item.symbol === bot.symbol)?.description ?? 'Manual close: weekdays 09:15-15:20 IST, including entry day.') : 'A fresh SmartAPI quote is required.'}">Close paper position</button>` : `<button class="button secondary small" data-action="edit" data-id="${bot.id}" ${bot.status === 'running' ? 'disabled' : ''}>Configure</button>`}
-    <button class="button secondary small" data-action="logs" data-id="${bot.id}" aria-label="View logs for ${escape(bot.name)}">Logs</button></div>
+    <button class="button secondary small" data-action="logs" data-id="${bot.id}" aria-label="View logs for ${escape(bot.name)}">Logs</button>
+    ${bot.status === 'paused' ? `<button class="button secondary small" data-action="delete" data-id="${bot.id}" ${position ? 'disabled title="Close the paper position before moving this bot to the bin."' : ''}>Move to bin</button>` : ''}</div>
   </article>`;
 }
 function ordersTable(limit = 100) {
@@ -129,11 +130,19 @@ function overview() {
 }
 function botsPage() {
   return `${heading('Rules into action.', 'Configure, start, and monitor your predefined paper strategies.')}
+    <div class="section-heading"><p class="muted">Paused bots without open positions can be moved to the bin.</p><button class="text-button" data-page="bin">Bot bin (${(state.deletedBots ?? []).length})</button></div>
     ${banners()}${collapsibleNotice('paper-data', 'subtle', sourcePill(), 'Every market price comes from Angel One. Paper cash and fills are simulated and kept separate from your actual account.')}
     <div class="bot-grid">${state.bots.map(botCard).join('')}<button class="new-bot-card" data-action="create"><span>+</span><strong>A rule worth testing?</strong><p>Give it a name, a level, and a risk limit.</p><small>Create paper bot ↗</small></button></div>
     ${backtestPanel()}
     <section class="panel preset-panel"><div class="section-heading"><h2>Entry strategies</h2><span class="pill gray">LONG-ONLY · NSE CASH</span></div><div class="preset-grid">${state.presets.map(preset => `<div><h3>${escape(preset.name)}</h3><p>${escape(preset.description)}</p>${(preset.sources ?? []).map(source => `<p><a href="${escape(source.url)}" target="_blank" rel="noopener noreferrer">${escape(source.name)}</a></p>`).join('')}</div>`).join('')}</div><p class="feed-note">Breakouts use sampled prices; moving averages use polling samples, not exchange candles. No averaging down, leverage, shorts, or derivatives. Swing defaults are illustrative, not a backtested edge.</p></section>
     <section class="panel preset-panel"><div class="section-heading"><h2>Exit strategies</h2><span class="pill gray">SAME-DAY EXITS ALLOWED</span></div><div class="preset-grid">${state.exitPresets.map(preset => `<div><h3>${escape(preset.name)}</h3><p>${escape(preset.description)}</p></div>`).join('')}</div><p class="feed-note">Choose independently of entry. Stop loss and take profit remain active with eligible fresh quotes; no Muhurat auction/post-close fills. Timers count entry day as session 1, skipping weekends and verified NSE holidays except the verified 8 November 2026 Muhurat session. Other unsupported special sessions/years produce an explicit alert. Missed deadlines use the next eligible fresh quote, not a historical fill. Performance means price gain from entry before fees and exit slippage. Without a timed rule, positions may carry overnight. No broker-side orders; keep the app running.</p></section>`;
+}
+function binPage() {
+  const bots = state.deletedBots ?? [];
+  return `<button class="text-button" data-page="bots">Back to my bots</button>
+    ${heading('Bot bin', 'Removed bots no longer run or count toward your bot limit. Their saved logs and order journal remain available.', false)}
+    ${banners()}
+    ${bots.length ? `<div class="bot-grid">${bots.map(bot => `<article class="bot-card"><span class="pill gray">In bin</span><h3>${escape(bot.name)}</h3><p class="bot-sub">NSE:${escape(bot.symbol)}</p><p class="bot-message">Removed ${date(bot.deletedAt)} IST</p><div class="bot-actions"><button class="button secondary small" data-action="logs" data-id="${bot.id}" aria-label="View logs for ${escape(bot.name)}">Logs</button><button class="button secondary small" data-page="orders">Order journal</button></div></article>`).join('')}</div>` : '<div class="empty compact"><h2>The bot bin is empty</h2><p>Bots moved to the bin will appear here with their saved logs.</p></div>'}`;
 }
 function backtestPanel() {
   const run = state.backtest, summary = run?.summary;
@@ -193,7 +202,7 @@ function renderPage() {
   });
   $('#page-label').textContent = pages[page];
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.page === page));
-  $('#main').innerHTML = page === 'logs' ? logsPage() : page === 'overview' ? overview() : page === 'bots' ? botsPage() : page === 'broker' ? brokerPage() : page === 'settings' ? settingsPage() :
+  $('#main').innerHTML = page === 'logs' ? logsPage() : page === 'overview' ? overview() : page === 'bots' ? botsPage() : page === 'bin' ? binPage() : page === 'broker' ? brokerPage() : page === 'settings' ? settingsPage() :
     `${heading('Every fill, accounted for.', 'An immutable journal of simulated entries and exits. Prices and fees in INR.', false)}${banners()}<div class="notice subtle">Every row is a paper fill, never an Angel One order. Net exit P&amp;L excludes entry fees; total portfolio P&amp;L includes both sides. Feed labels remain attached to historical fills.</div><section class="panel">${ordersTable()}</section>`;
 }
 function logsPage() {
@@ -201,7 +210,8 @@ function logsPage() {
   if (!view) return '<button class="button secondary" data-page="bots">Back to my bots</button>';
   const decisions = { no_action: 'No action', blocked: 'Blocked', holding: 'Holding', buy: 'Paper buy', sell: 'Paper sell', rolled_back: 'Rolled back', skipped: 'Skipped' };
   const today = new Date(Date.parse(state.serverTime) + 19800000).toISOString().slice(0, 10);
-  return `<button class="text-button" data-page="bots">← Back to my bots</button>
+  const inBin = (state.deletedBots ?? []).some(bot => bot.id === view.id);
+  return `<button class="text-button" data-page="${inBin ? 'bin' : 'bots'}">← Back to ${inBin ? 'bot bin' : 'my bots'}</button>
     <div class="page-heading logs-heading"><div><h1 id="logs-title" tabindex="-1">${escape(view.name)} logs</h1><p>NSE:${escape(view.symbol)} · Every saved analysis, including checks that did not trade.</p></div></div>
     ${banners()}
     <section class="panel logs-panel" aria-busy="${view.loading}">
@@ -321,7 +331,7 @@ document.addEventListener('click', async event => {
   const action = target.dataset.action;
   if (action === 'create') return openBot();
   if (action === 'edit') return openBot(state.bots.find(bot => bot.id === target.dataset.id));
-  if (action === 'logs') return openLogs(state.bots.find(bot => bot.id === target.dataset.id));
+  if (action === 'logs') return openLogs([...state.bots, ...(state.deletedBots ?? [])].find(bot => bot.id === target.dataset.id));
   if (action === 'logs-refresh' || action === 'logs-older') return loadLogs(action === 'logs-older');
   if (action === 'retry') return refresh();
   if (action === 'backtest' || action === 'backtest-replay') {
@@ -349,12 +359,17 @@ document.addEventListener('click', async event => {
     finally { target.disabled = false; }
     return;
   }
-  if (!['start', 'pause', 'close', 'connect'].includes(action)) return;
+  if (!['start', 'pause', 'close', 'connect', 'delete'].includes(action)) return;
+  if (action === 'delete') {
+    const bot = state.bots.find(bot => bot.id === target.dataset.id);
+    if (!bot || bot.status !== 'paused' || bot.position) { toast('Only paused bots without an open paper position can be moved to the bin.', true); return; }
+    if (!window.confirm(`Move "${bot.name}" to the bot bin? Saved logs and paper order history will be kept.`)) return;
+  }
   target.disabled = true;
   try {
     await api(action === 'connect' ? '/api/broker/connect' : `/api/bots/${target.dataset.id}/${action}`, {});
     await refresh();
-    toast(action === 'connect' ? 'Real Angel One account verified. No orders sent.' : action === 'close' ? 'Paper position closed using a fresh quote.' : `Paper bot ${action === 'start' ? 'started' : 'paused'}.`);
+    toast(action === 'delete' ? 'Bot moved to the bin. Review its saved logs from My bots > Bot bin.' : action === 'connect' ? 'Real Angel One account verified. No orders sent.' : action === 'close' ? 'Paper position closed using a fresh quote.' : `Paper bot ${action === 'start' ? 'started' : 'paused'}.`);
   } catch (error) { toast(error.message, true); await refresh(); }
   finally { target.disabled = false; }
 });
