@@ -10,6 +10,11 @@ export function validQuote(quote, mode, now) {
   return mode === 'angel' && quote?.source === 'angel' && Number.isFinite(quote.price) && quote.price > 0 &&
     Number.isFinite(Date.parse(quote.at)) && now - Date.parse(quote.at) <= 60000 && now - Date.parse(quote.at) >= -5000;
 }
+function validValuationQuote(quote, source, symbol, now) {
+  return source === 'angel' && quote?.source === 'angel' && (quote.symbol === undefined || quote.symbol === symbol) &&
+    Number.isFinite(quote.price) && quote.price > 0 && Number.isFinite(Date.parse(quote.at)) &&
+    Date.parse(quote.at) <= now + 5000;
+}
 function number(value, name, min, max, integer = false) {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max || (integer && !Number.isInteger(value))) {
     throw new AppError(`${name} must be ${integer ? 'a whole number' : 'a number'} between ${min} and ${max}.`);
@@ -99,17 +104,22 @@ export function metrics(store, quotes, now = Date.now()) {
   const bots = store.bots();
   const orders = store.orders();
   let cost = 0, marketValue = 0, unrealised = 0, openRisk = 0;
-  let stalePositions = 0;
+  let stalePositions = 0, unavailablePositions = 0, valuationAt = null;
+  const savedQuotes = new Map(store.valuationQuotes().map(quote => [quote.symbol, quote]));
   for (const bot of bots) {
     if (!bot.position) continue;
     const position = bot.position;
-    const quote = quotes.get(bot.symbol);
+    const quote = [quotes.get(bot.symbol), savedQuotes.get(bot.symbol)]
+      .filter(item => validValuationQuote(item, position.source, bot.symbol, now))
+      .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
     const fresh = validQuote(quote, position.source, now);
     if (!fresh) stalePositions++;
+    if (!quote) unavailablePositions++;
     cost += position.entry * position.qty;
-    if (fresh) {
+    if (quote) {
       marketValue += quote.price * position.qty;
       unrealised += (quote.price - position.entry) * position.qty;
+      if (valuationAt === null || Date.parse(quote.at) < Date.parse(valuationAt)) valuationAt = quote.at;
     }
     openRisk += position.maxLoss;
   }
@@ -120,13 +130,13 @@ export function metrics(store, quotes, now = Date.now()) {
   // Entry fees are already deducted from cash; include them in the daily loss gate.
   const dayEntryFees = dayOrders.filter(order => order.side === 'BUY').reduce((total, order) => total + order.fee, 0);
   return {
-    cash: settings.cash, invested: money(cost), equity: stalePositions ? null : money(settings.cash + marketValue),
-    unrealised: stalePositions ? null : money(unrealised), realised: money(realised),
-    totalPnl: stalePositions ? null : money(settings.cash + marketValue - settings.initialCash),
+    cash: settings.cash, invested: money(cost), equity: unavailablePositions ? null : money(settings.cash + marketValue),
+    unrealised: unavailablePositions ? null : money(unrealised), realised: money(realised),
+    totalPnl: unavailablePositions ? null : money(settings.cash + marketValue - settings.initialCash),
     dayLoss: money(Math.max(0, dayEntryFees - dayPnl)), openRisk: money(openRisk),
     entriesToday: dayOrders.filter(order => order.side === 'BUY').length,
     running: bots.filter(bot => bot.status === 'running').length,
-    positions: bots.filter(bot => bot.position).length, stalePositions
+    positions: bots.filter(bot => bot.position).length, stalePositions, unavailablePositions, valuationAt
   };
 }
 
@@ -222,8 +232,11 @@ export class Engine {
           }
           this.evaluate(bot, record);
         }
+        for (const quote of newQuotes.values()) {
+          if (validValuationQuote(quote, 'angel', quote.symbol, this.now())) this.store.saveValuationQuote(quote);
+        }
         const totals = metrics(this.store, this.quotes, this.now());
-        if (totals.equity !== null) this.store.equityPoint({ at: new Date(this.now()).toISOString(), value: totals.equity, source: 'angel', stale: false });
+        if (totals.equity !== null && !totals.stalePositions) this.store.equityPoint({ at: new Date(this.now()).toISOString(), value: totals.equity, source: 'angel', stale: false });
       });
       committed = true;
       for (const record of records) record.committed = true;

@@ -256,7 +256,7 @@ Timed rules count entry day as session 1 and accept 1-60 sessions and **09:15-15
 
 The regular execution window is weekdays **09:15-15:20 IST**. A date-specific Muhurat exception on 8 November 2026 follows [NSE circular CMTR76941](https://nsearchives.nseindia.com/content/circulars/CMTR76941.pdf): 14:20-15:30 for the configured NIFTYBEES non-CAS instrument; other symbols conservatively stop at 15:15. No auction/post-close fills are simulated. This is not a complete live-ready holiday/special-session gate.
 
-Actual broker holdings never become paper capital or positions. Journal exit P&L excludes the separately recorded entry fee; total equity includes both fees. Without a fresh quote for a held position, current equity/unrealised P&L is unavailable, not marked at an invented price.
+Actual broker holdings never become paper capital or positions. Journal exit P&L excludes the separately recorded entry fee; total equity includes both fees. Equity and unrealised P&L use each held instrument's latest valid SmartAPI quote, including saved stale prices when the market is closed or the feed is unavailable. Saved valuation quotes survive server restarts and are never used for fills. Stale valuations are labelled with the oldest position quote's time, not presented as live values. If any held instrument has no valid saved or current quote, valuation remains unavailable; purchase cost is never substituted. The equity chart records fresh valuations only.
 
 ### Historical backtest
 
@@ -269,7 +269,7 @@ This replay uses next-bar-open fills, the same modelled fee/slippage, conservati
 | File/location | Contents | Handling |
 | --- | --- | --- |
 | `.env` | Your private API key and local configuration | Ignored by Git; never upload. |
-| `data/tradegrok.sqlite` and sidecars | Paper bots, cash, positions, orders, events, equity and backtests | Private financial state; back up safely with the server stopped. |
+| `data/tradegrok.sqlite` and sidecars | Paper bots, cash, positions, orders, events, equity, saved valuation quotes and backtests | Private financial state; back up safely with the server stopped. |
 | `data/private/smartapi-session.json` | Daily auth/feed tokens and retention metadata | Plaintext credentials; exclude from backups, sync and uploads. |
 | `data/logs/analysis-YYYY-MM-DD.jsonl` | Per-cycle strategy decisions and risk checks | Private financial logs; persist and grow until you manage them locally. |
 | `.env.example`, `.env.azure.example` | Empty keys/generic setup templates | Safe to commit; never replace placeholders with your real credentials. |
@@ -293,7 +293,7 @@ Before publishing your own changes, inspect `git diff --cached` and `git ls-file
 | Relay unavailable | Check `/healthz`, your exact deployed hostname and provider settings. Cloudflare can hit free-plan quotas; Azure F1 can idle or hit quotas. |
 | Callback received but quotes unavailable | Select **Verify read-only connection**; callback receipt alone does not verify broker access. |
 | Account verification error | Check the displayed operation/status/code and broker service status. Successful HTTP alone is insufficient; `AB2001`/`AB1004` can indicate broker failures, not an empty portfolio. |
-| Quotes stale / market closed | Wait for eligible fresh exchange data; never replace it with made-up prices. |
+| Quotes stale / market closed | Capital uses labelled last known SmartAPI prices. Fills still wait for eligible fresh exchange data; never replace it with made-up prices. |
 | Too many requests | Search/data calls are serialized at least 1.1 seconds apart; multiple symbols slow a cycle. Allow retries/time between account refreshes. |
 | Changed network | Restart: the process caches a credential-free public-IP lookup used for broker headers. Follow any current broker IP policy. |
 | Browser blocks local return | Do not bypass safety warnings; use a supported browser configuration and retry a new login. |

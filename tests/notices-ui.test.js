@@ -41,10 +41,19 @@ test('routine trade notices use collapsed native disclosures with visible headli
   assert.match(html, /<summary>NSE:DIVISLAB Muhurat paper window closed\.<\/summary>/);
   assert.match(html, /14:20-15:15 IST \(conservative CAS cutoff\)\. No auction\/post-close fills\./);
   assert.match(html, /No automatic liquidation at close; existing exit rules remain unchanged\./);
-  assert.match(html, /<summary>Some open positions have no fresh SmartAPI quote\.<\/summary>/);
-  assert.match(html, /Current equity and unrealised P&amp;L are unavailable\. No fills on stale prices\./);
+  assert.match(html, /<summary>Equity and unrealised P&amp;L use last known SmartAPI prices\.<\/summary>/);
+  assert.match(html, /These are not live values\. No fills on stale prices\./);
   assert.doesNotMatch(html, /RELIANCE/);
   assert.match(f.run('botsPage()'), /data-notice-id="paper-data"><summary><span class="pill mint">SMARTAPI MARKET DATA/);
+});
+
+test('missing saved quotes keep their distinct unavailable notice collapsible', () => {
+  const f = fixture();
+  f.context.snapshot.metrics.unavailablePositions = 1;
+  const html = f.run('banners()');
+  assert.match(html, /data-notice-id="stale-positions"><summary>Some open positions have no saved valid SmartAPI quote\.<\/summary>/);
+  assert.match(html, /Equity and unrealised P&amp;L are unavailable until prices are received\. No fills on stale prices\./);
+  assert.doesNotMatch(html, /use last known SmartAPI prices/);
 });
 
 test('critical notices start expanded and untrusted notice content is escaped', () => {
