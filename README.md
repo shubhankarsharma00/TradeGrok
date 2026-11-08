@@ -1,0 +1,279 @@
+# TradeGrok
+
+**Your rules. Your trades. Real market data, simulated execution.**
+
+A local-first trading desk for Indian markets. Connect Angel One SmartAPI, view your real holdings separately, and test transparent entry and exit rules in a paper portfolio with shared risk limits.
+
+> **Paper execution only.** TradeGrok cannot place, modify or cancel broker orders. There is no live-trading switch. This is an experimental strategy-testing tool, not financial advice or a promise of returns.
+
+![TradeGrok dashboard with an isolated demo paper portfolio](docs/screenshots/overview.png)
+
+*All screenshots use a fresh, in-memory demo with no broker credentials, account holdings, private trading history or live quotes. The displayed capital is simulated.*
+
+## What you can do
+
+| Feature | What it does |
+| --- | --- |
+| Local trading desk | Paper equity, cash, positions, risk usage, market watch and workspace activity in one dashboard. |
+| Angel One connection | Hosted broker login, read-only holdings and NSE cash-segment positions, actual quotes and historical candles. |
+| Paper bots | Price breakout, buy-the-dip, moving-average cross and manually configured swing breakout. |
+| Independent exits | Stop/target, moving-average reversal, support breakdown, holding-period, scheduled and time-plus-performance rules. |
+| Shared guardrails | Per-trade modelled loss, daily loss plus open risk, position cap, cash checks and daily entry limits. |
+| Order journal and analysis | Inspect simulated fills and per-cycle decision records, including blocked conditions. |
+| Historical replay | A deliberately scoped RELIANCE SMA backtest using actual five-minute broker candles. |
+
+The interface is vanilla JavaScript and CSS, with locally hosted Silkscreen headings. The server uses Node's built-in HTTP and SQLite modules: **no third-party runtime dependencies, frontend build or Python SDK required.**
+
+## Quick start
+
+Install [Node.js 24 or newer](https://nodejs.org/), including npm, and Git.
+
+```sh
+git clone https://github.com/shubhankarsharma00/TradeGrok.git
+cd TradeGrok
+node --version
+```
+
+Create your **own local** configuration without overwriting an existing file:
+
+```sh
+# macOS / Linux; run from the repository root
+if [ ! -e .env ]; then
+  (umask 077; cp .env.example .env)
+fi
+chmod 600 .env
+npm start
+```
+
+On Windows PowerShell:
+
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+npm start
+```
+
+Keep `.env` accessible only to your Windows user using filesystem permissions; `chmod` instructions apply to macOS/Linux.
+
+Open **http://127.0.0.1:3100**. A fresh installation has 100,000 INR of simulated cash and one paused bot. You can explore the UI without connecting an account; market prices and paper execution require verified SmartAPI access. The empty API key and relay fields in `.env.example` are intentional.
+
+### Configure `.env`
+
+Edit `.env` locally in your editor, not in GitHub, an issue, a screenshot or chat:
+
+```dotenv
+PORT=3100
+SMARTAPI_API_KEY=REPLACE_WITH_YOUR_OWN_API_KEY
+SMARTAPI_RELAY_ORIGIN=https://YOUR-APP.azurewebsites.net
+```
+
+| Variable | Purpose |
+| --- | --- |
+| `PORT` | Local HTTP port, default `3100`; must be an integer from `1024` to `65535`. |
+| `SMARTAPI_API_KEY` | Your SmartAPI app's API key. Required for login; keep it local. |
+| `SMARTAPI_RELAY_ORIGIN` | Your callback relay's public HTTPS origin, **without** a path, query or explicit port. Leave blank for disconnected exploration/development only. |
+
+Replace both placeholders before connecting. Restart `npm start` after changing configuration. Do not copy someone else's key or deployment URL. There is no client PIN, password, client code or TOTP-secret setting in TradeGrok: those belong in Angel One's hosted login.
+
+## Set up Angel One and SmartAPI
+
+### 1. Prepare your broker account
+
+You need your own active [Angel One](https://www.angelone.in/) account with access to the instruments/data you want to use. Complete the broker's current account onboarding and login/2FA requirements directly with Angel One. TradeGrok does not open accounts or change account settings.
+
+Sign in to the [SmartAPI developer portal](https://smartapi.angelone.in/) and open **MyApps**. Create/configure your own application and obtain its API key. Portal labels, account eligibility, API entitlements and any network/static-IP requirements can change: check the [official documentation](https://smartapi.angelone.in/docs) for your app type. A callback relay is **not** a proxy for quote/account requests and does not provide a static outbound IP for your computer.
+
+### 2. Deploy your public HTTPS callback relay
+
+Angel One registration requires a public HTTPS redirect URL; **do not register loopback or expose the local dashboard through a public tunnel**. The included relay is designed for an **Azure Linux App Service**. Only the relay goes to Azure; your keys, tokens, dashboard and financial database stay local.
+
+1. Create/select your own Linux App Service with a supported Node.js runtime (**22+ for the relay; 24+ for the local dashboard**). Check current pricing, region availability, quotas and your subscription before creating resources. A Free F1 plan may be suitable where available, but can idle or hit quotas; no free availability or cost guarantee is implied.
+2. Note the app's actual default HTTPS hostname, including any generated suffix. In App Service environment settings, set `PUBLIC_ORIGIN=https://YOUR-APP.azurewebsites.net` and `LOCAL_RETURN_ORIGIN=http://127.0.0.1:3100`, replacing the hostname with the real one. `.env.azure.example` is a **nonsecret reference template**, not an automatically loaded cloud env file.
+3. Set startup to **`node server/azure.js`**. Azure supplies `PORT`, `WEBSITE_SITE_NAME` and `WEBSITE_HOSTNAME`; the relay requires `PUBLIC_ORIGIN` to match that supplied hostname.
+4. Enable HTTPS Only and TLS 1.2 or newer. This callback must be publicly reachable without a second login redirect; do not enable App Service Authentication/Easy Auth for it. Do not put broker credentials or your local `.env` in App Service.
+5. **Before a real login**, disable HTTP/access logs, detailed errors, failed-request tracing and application request/body/header logging. Leave Application Insights and logging proxies/CDNs off. Callback queries and redirect `Location` headers contain tokens and must not be captured.
+6. Deploy **only** the allowlisted relay bundle below, not the whole project or your workspace.
+
+Build a relay-only ZIP from a clean checkout on macOS/Linux:
+
+```sh
+# Refuses to overwrite an existing relay staging directory.
+mkdir .relay-build &&
+mkdir .relay-build/server &&
+cp server/azure.js server/azure-callback.js server/smartapi.js \
+  server/http.js server/broker.js .relay-build/server/ &&
+printf '%s\n' '{"name":"tradegrok-callback-relay","private":true,"type":"module","engines":{"node":">=22.0.0"},"scripts":{"start":"node server/azure.js"}}' \
+  > .relay-build/package.json &&
+(cd .relay-build && zip -q -r ../tradegrok-relay.zip package.json server)
+```
+
+Keep `.relay-build/` and the ZIP out of Git. This bundle intentionally contains no `.env`, database, private session, frontend, tests or runner. It is ready to run with no dependency installation/build.
+
+With the [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli), sign in using `az login`, then deploy to your own existing resource:
+
+```sh
+az webapp deploy \
+  --resource-group YOUR_RESOURCE_GROUP \
+  --name YOUR_APP_NAME \
+  --src-path tradegrok-relay.zip \
+  --type zip
+```
+
+Deployment restarts the app. You can also upload the ZIP to [Azure Cloud Shell](https://learn.microsoft.com/en-us/azure/cloud-shell/get-started/ephemeral) and use its CLI, adjusting the file path; use ephemeral/no-storage mode if appropriate rather than inadvertently provisioning persistent storage. See [ZIP deployment](https://learn.microsoft.com/en-us/azure/app-service/deploy-zip) and [Node.js App Service configuration](https://learn.microsoft.com/en-us/azure/app-service/configure-language-nodejs).
+
+Check the relay before using real credentials:
+
+```sh
+curl --fail https://YOUR-APP.azurewebsites.net/healthz
+# Expected: {"status":"ok"}
+```
+
+`/`, `/api/state` and local file paths should return `404`. Only `/healthz` and `/auth/smartapi/callback` are available. Health does not prove a broker login works.
+
+### 3. Register the redirect and connect locally
+
+In SmartAPI **MyApps**, register this exact **Redirect URL**, using your actual relay hostname:
+
+```text
+https://YOUR-APP.azurewebsites.net/auth/smartapi/callback
+```
+
+Set `SMARTAPI_RELAY_ORIGIN` to the **same origin without `/auth/smartapi/callback`**, and set that app's `SMARTAPI_API_KEY` in your local `.env`. Restart the local server.
+
+1. Open **http://127.0.0.1:3100** and choose **Broker connection → Login with Angel One**.
+2. Complete the broker's hosted sign-in in the **same browser within five minutes**, keeping TradeGrok running. Enter your client credentials and any PIN/OTP/TOTP only on the official broker page. Do not paste a QR secret or token into TradeGrok.
+3. On return, **callback received** means tokens arrived, not that account access has been verified.
+4. Select **Verify read-only connection**. Successful holdings/positions verification unlocks actual quote monitoring for configured instruments.
+5. Configure bots, review risk controls and start each bot explicitly.
+
+Use `127.0.0.1`, not `localhost`, so the browser-bound login cookie matches. If you change `PORT`, also change the relay's `LOCAL_RETURN_ORIGIN`. The public redirect remains on the relay hostname.
+
+![Disconnected SmartAPI setup with a generic relay hostname](docs/screenshots/broker-connection.png)
+
+### How login works
+
+```mermaid
+sequenceDiagram
+    participant Browser
+    participant Local as Local TradeGrok
+    participant Broker as Angel One
+    participant Relay as Azure HTTPS relay
+    Browser->>Local: Start login
+    Local-->>Browser: Hosted login URL + browser-bound cookie
+    Browser->>Broker: Authenticate on broker page
+    Broker-->>Relay: Callback with state and auth/feed tokens
+    Relay-->>Browser: Redirect to fixed loopback return with URL fragment
+    Browser->>Local: Same-origin token handoff
+    Local->>Local: Validate state/cookie; save private daily session
+    Browser->>Local: Verify read-only connection
+    Local->>Broker: Request holdings and positions
+```
+
+The local server checks single-use state, a browser-bound HttpOnly cookie, the exact callback/Origin and a five-minute deadline. Azure is stateless: it redirects to a fixed loopback origin and has no token retrieval endpoint or database. The local landing page scrubs the token-bearing fragment before posting it back to the server. Never share a callback address, browser history, redirect header or network capture.
+
+## Configure a paper strategy
+
+Choose **My bots → Create bot**, or **Configure** on a paused bot without an open position. Search with at least two ticker characters after login, then choose an exact NSE cash `-EQ` result. Enter the bare ticker, such as `RELIANCE` or `M&M`, not `NSE:` or `-EQ`.
+
+![Paper bot configuration dialog](docs/screenshots/bot-configuration.png)
+
+| Entry preset | Trigger |
+| --- | --- |
+| Price breakout | Previous sampled price at/below your level, current price above it. Starting already above does not trigger. |
+| Buy the dip | Current sampled price at/below your configured level. |
+| Moving-average cross | 5-sample average crosses above 12-sample average; needs 13 observations. |
+| Swing breakout | The sampled breakout rule applied to a resistance level you choose from a daily chart. Illustrative defaults: 3% stop, 6% target, minimum 2:1 configured reward/risk. |
+
+Polling observations are **not exchange candles**. Swing mode does not automatically compute trend, resistance, ATR, earnings or volume confirmation. Choose the entry level yourself; blank levels are not invented from an unavailable quote.
+
+Choose an exit independently: protective stop/target, 5/12 moving-average reversal, support breakdown, maximum holding period, scheduled exit or a one-time time-plus-performance check. Stop/target protection remains active with every exit preset; the first eligible exit closes the whole paper position. Stop/target takes priority over simultaneous custom signals.
+
+Timed rules count entry day as session 1 and accept 1-60 sessions and **09:15-15:14 IST**. They use the verified **2026** NSE calendar plus the supported 8 November 2026 Muhurat exception; unsupported years/special-session boundaries block timed decisions with an alert. If the app misses a deadline, the next eligible fresh quote is used, not a fabricated historical fill.
+
+## Risk and execution model
+
+![Shared paper risk controls](docs/screenshots/risk-settings.png)
+
+- Long-only, whole-share NSE cash-equity simulations; no shorts, derivatives, leverage, averaging down or pyramiding. Up to 12 bots, one position and one entry per bot per IST day.
+- Size is constrained by bot budget, position cap, simulated cash including fees, per-trade modelled stop loss and remaining daily risk.
+- Daily risk uses realised losses net of gains plus entry fees and currently reserved stop risk, **not** gross cumulative losses or maximum intraday drawdown. Gaps can exceed modelled limits.
+- Simulated fills apply **0.05% adverse slippage and 0.05% fee per side**. Real taxes, brokerage, liquidity and execution differ. A stop is not a guaranteed fill price.
+- Entries and exits require eligible execution windows and a matching broker exchange timestamp no older than **60 seconds**. Missing, malformed or failed quotes block the whole cycle, including exits; no synthetic fallback prices are used.
+- **Pause all entries** and bot pause prevent new entries, not exit monitoring or automatic flattening. Positions can carry overnight. No global end-of-day square-off exists.
+- Monitoring only works while the local server/computer and data feed are available. No broker-side protective orders exist. Lowering limits does not resize existing positions.
+
+The regular execution window is weekdays **09:15-15:20 IST**. A date-specific Muhurat exception on 8 November 2026 follows [NSE circular CMTR76941](https://nsearchives.nseindia.com/content/circulars/CMTR76941.pdf): 14:20-15:30 for the configured NIFTYBEES non-CAS instrument; other symbols conservatively stop at 15:15. No auction/post-close fills are simulated. This is not a complete live-ready holiday/special-session gate.
+
+Actual broker holdings never become paper capital or positions. Journal exit P&L excludes the separately recorded entry fee; total equity includes both fees. Without a fresh quote for a held position, current equity/unrealised P&L is unavailable, not marked at an invented price.
+
+### Historical backtest
+
+The **My bots** backtest panel requires exactly one bot named **`safe play`** using **RELIANCE**, SMA entry and protective stop/target exits. It downloads seven completed NSE sessions plus two warm-up sessions of actual five-minute candles. A current login is required for download.
+
+This replay uses next-bar-open fills, the same modelled fee/slippage, conservative same-bar stop/target conflicts and strict continuous-session coverage. RELIANCE requires 72 continuous bars/day; the closing auction is excluded. Missing/zero-volume/unsupported sessions block performance results, rather than substituting older days. Saved datasets can be downloaded and replayed with their original configuration/hash without altering your paper bots. It is not a generic multi-symbol backtester, tick replay or prediction.
+
+## Local data and privacy
+
+| File/location | Contents | Handling |
+| --- | --- | --- |
+| `.env` | Your private API key and local configuration | Ignored by Git; never upload. |
+| `data/tradegrok.sqlite` and sidecars | Paper bots, cash, positions, orders, events, equity and backtests | Private financial state; back up safely with the server stopped. |
+| `data/private/smartapi-session.json` | Daily auth/feed tokens and retention metadata | Plaintext credentials; exclude from backups, sync and uploads. |
+| `data/logs/analysis-YYYY-MM-DD.jsonl` | Per-cycle strategy decisions and risk checks | Private financial logs; persist and grow until you manage them locally. |
+| `.env.example`, `.env.azure.example` | Empty keys/generic setup templates | Safe to commit; never replace placeholders with your real credentials. |
+
+On macOS/Unix, the session directory/file use owner-only `0700`/`0600` permissions and atomic writes. Tokens are restored only until their original **midnight IST** expiry; restart does not extend it, and account verification must be repeated after restart. A stopped app cannot remove an expired file at midnight, but refuses to load it later.
+
+**Clear local SmartAPI session** deletes the saved local session; it does not revoke tokens or log out at Angel One. Normal shutdown preserves today's session. Corrupt/unsafe session files block startup visibly. Tokens never enter dashboard state, SQLite or application logs; raw callback URLs must still be treated as secrets.
+
+The local dashboard binds to loopback and has no remote-user authentication. **Never deploy it publicly**, bind it to a public interface or tunnel it to the internet. Local Host/Origin checks, CSRF protection, CSP and static-file allowlisting do not isolate other programs running as you.
+
+Before publishing your own changes, inspect `git diff --cached` and `git ls-files`. Ignore rules are not protection against forced adds or already tracked files. Screenshots, issue attachments and archives need the same privacy review as source code.
+
+## Troubleshooting
+
+| Symptom | Action |
+| --- | --- |
+| `node:sqlite` or env-file option unavailable | Use Node.js 24+ for the dashboard; check `node --version`. |
+| Login disabled / not configured | Set your API key in local `.env` and restart. |
+| Loopback redirect rejected | Register your relay's public HTTPS callback, not `127.0.0.1`. |
+| Callback rejected / expired | Start a new attempt in the same browser within five minutes; use the exact `127.0.0.1` port and keep the server running. |
+| Relay unavailable | Check `/healthz`, startup, actual Azure hostname and environment settings; a free plan may idle. |
+| Callback received but quotes unavailable | Select **Verify read-only connection**; callback receipt alone does not verify broker access. |
+| Account verification error | Check the displayed operation/status/code and broker service status. Successful HTTP alone is insufficient; `AB2001`/`AB1004` can indicate broker failures, not an empty portfolio. |
+| Quotes stale / market closed | Wait for eligible fresh exchange data; never replace it with made-up prices. |
+| Too many requests | Search/data calls are serialized at least 1.1 seconds apart; multiple symbols slow a cycle. Allow retries/time between account refreshes. |
+| Changed network | Restart: the process caches a credential-free public-IP lookup used for broker headers. Follow any current broker IP policy. |
+| Browser blocks local return | Do not bypass safety warnings; use a supported browser configuration and retry a new login. |
+| Timed exit blocked | Review the supported calendar year/session, freshness and configured deadline. Do not assume future holidays are supported. |
+
+## Development
+
+```sh
+npm run dev     # Watch-mode local server; reads your local .env
+npm run check   # JavaScript syntax checks
+npm test        # Node's built-in test runner
+```
+
+```text
+public/                   Browser dashboard and licensed local font
+server/index.js           Loopback-only application entrypoint
+server/app.js             Local API and static assets
+server/smartapi.js         Hosted login, state and session handling
+server/angel.js            Read-only account and actual quote adapter
+server/history.js         Broker historical data and request handling
+server/engine.js           Paper execution and risk checks
+server/backtest.js         Scoped historical replay
+server/market-calendar.js  Supported trading-session rules
+server/store.js            SQLite persistence
+server/session-file.js     Private daily token persistence
+server/analysis-log.js     Local strategy-decision logs
+server/azure.js            Relay-only cloud entrypoint
+server/azure-callback.js   Stateless HTTPS-to-loopback handoff
+tests/                    Synthetic fixtures and behavior tests
+docs/screenshots/         Credential-free demo screenshots
+data/                     Generated locally; never committed
+```
+
+`npm start` is the local dashboard; `npm run start:azure` is the separately configured cloud relay. Do not interchange their deployment environments.
+
+The bundled font's [SIL Open Font License](public/fonts/OFL.txt) is retained. Angel One/SmartAPI names belong to their respective owners; this project is not an official broker product.
