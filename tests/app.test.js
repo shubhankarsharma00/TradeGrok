@@ -92,6 +92,67 @@ test('swing preset is exposed, saved, and enforces its risk floor through the AP
   assert.equal(store.bot(bot.id).targetPct, 8);
   assert.equal(store.orders().length, 0);
 });
+test('paused bots move to the bin without losing logs, orders, cash or daily risk history', async t => {
+  const now = () => Date.parse('2026-11-09T10:00:00+05:30');
+  const broker = { status: () => ({ status: 'connected' }), account: null, quote: async symbol => ({ symbol, price: 500, source: 'angel', at: new Date(now()).toISOString() }) };
+  const reads = [];
+  const analysisLog = {
+    status: () => ({ enabled: true }),
+    append() {},
+    read: async (...args) => { reads.push(args); return { records: [{ reason: 'Saved bot analysis' }], before: null }; }
+  };
+  const { store, engine, post, initial, base } = await fixture(t, broker, { now, analysisLog });
+  const bot = initial.bots[0], path = `/api/bots/${bot.id}`;
+  assert.equal((await post(`${path}/delete`, {}, { 'X-Tradegrok-CSRF': '' })).status, 403);
+  assert.equal((await post(`${path}/configure`, { ...bot, preset: 'dip', level: 1000 })).status, 200);
+  assert.equal((await post(`${path}/start`, {})).status, 200);
+  assert.equal((await post(`${path}/delete`, {})).status, 409);
+  await engine.tick();
+  assert.ok(store.bot(bot.id).position);
+  assert.equal((await post(`${path}/pause`, {})).status, 200);
+  assert.equal((await post(`${path}/delete`, {})).status, 409);
+  assert.ok(store.bot(bot.id).position);
+  assert.equal((await post(`${path}/close`, {})).status, 200);
+  const orders = store.orders(), settings = store.settings();
+  const before = await (await fetch(`${base}/api/state`)).json();
+  assert.equal((await post('/api/emergency', { active: true })).status, 200);
+  const response = await post(`${path}/delete`, {});
+  assert.equal(response.status, 200);
+  const removed = await response.json();
+  assert.equal(removed.deletedAt, new Date(now()).toISOString());
+  assert.equal(store.bot(bot.id), null);
+  assert.equal(store.bot(bot.id, true).status, 'paused');
+  const state = await (await fetch(`${base}/api/state`)).json();
+  assert.equal(state.bots.length, 0);
+  assert.equal(state.deletedBots[0].id, bot.id);
+  assert.deepEqual(state.orders, orders);
+  assert.equal(state.settings.cash, settings.cash);
+  for (const metric of ['dayLoss', 'entriesToday', 'equity', 'totalPnl']) assert.equal(state.metrics[metric], before.metrics[metric]);
+  for (const action of ['start', 'pause', 'close', 'configure', 'delete']) assert.equal((await post(`${path}/${action}`, {})).status, 404);
+  const logs = await fetch(`${base}${path}/logs?date=2026-11-09&before=100`);
+  assert.equal(logs.status, 200);
+  assert.equal((await logs.json()).records[0].reason, 'Saved bot analysis');
+  assert.deepEqual(reads[0], [bot.id, '2026-11-09', 100]);
+  assert.ok(store.events().some(event => event.botId === bot.id && event.message.includes('delete')));
+});
+test('moving a bot to the bin frees an active slot and an in-flight quote cannot recreate it', async t => {
+  let release;
+  const now = () => Date.parse('2026-11-09T10:00:00+05:30');
+  const broker = { status: () => ({ status: 'connected' }), account: null, quote: symbol => new Promise(resolve => {
+    release = () => resolve({ symbol, price: 1500, source: 'angel', at: new Date(now()).toISOString() });
+  }) };
+  const { store, engine, post, initial } = await fixture(t, broker, { now });
+  const bot = initial.bots[0];
+  const tick = engine.tick();
+  assert.equal((await post(`/api/bots/${bot.id}/delete`, {})).status, 200);
+  release(); await tick;
+  assert.equal(store.bot(bot.id), null);
+  assert.equal(store.deletedBots().length, 1);
+  assert.equal(store.orders().length, 0);
+  for (let index = 0; index < 12; index++) assert.equal((await post('/api/bots', { ...bot, level: 1410, name: `Replacement ${index}` })).status, 201);
+  assert.equal((await post('/api/bots', { ...bot, level: 1410 })).status, 400);
+  assert.equal(store.bots().length, 12);
+});
 test('new timed exit strategies are exposed and saved independently with strict API validation', async t => {
   const { initial, post, store } = await fixture(t);
   assert.equal(initial.exitPresets.length, 6);

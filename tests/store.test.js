@@ -16,6 +16,25 @@ test('new workspaces have only SmartAPI prices and no invented instrument or ent
   } finally { store.close(); }
 });
 
+test('bin membership and associated paper history survive restart', t => {
+  const dir = mkdtempSync(join(tmpdir(), 'tradegrok-bin-'));
+  t.after(() => rmSync(dir, { recursive: true }));
+  const path = join(dir, 'test.sqlite');
+  let store = new Store(path);
+  const bot = store.bots()[0];
+  store.order({ id: 'saved-order', botId: bot.id, source: 'angel', side: 'SELL', pnl: -10 });
+  store.saveBot({ ...bot, deletedAt: '2026-11-09T04:30:00Z', revision: 1 });
+  store.close();
+  store = new Store(path);
+  t.after(() => store.close());
+  assert.deepEqual(store.bots(), []);
+  assert.equal(store.bot(bot.id), null);
+  assert.equal(store.deletedBots()[0].id, bot.id);
+  assert.equal(store.bot(bot.id, true).revision, 1);
+  assert.equal(store.orders()[0].botId, bot.id);
+  assert.equal(store.orders()[0].pnl, -10);
+});
+
 test('migration archives retired feed history and resets its gains without rewriting real-price paper trades', t => {
   const dir = mkdtempSync(join(tmpdir(), 'tradegrok-migration-'));
   t.after(() => rmSync(dir, { recursive: true }));

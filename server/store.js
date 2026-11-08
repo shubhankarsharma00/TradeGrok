@@ -130,8 +130,13 @@ export class Store {
   }
   settings() { return JSON.parse(this.db.prepare('SELECT body FROM settings WHERE id=1').get().body); }
   saveSettings(value) { this.db.prepare('INSERT OR REPLACE INTO settings VALUES (1, ?)').run(JSON.stringify(value)); }
-  bots() { return this.db.prepare('SELECT body FROM bots ORDER BY rowid').all().map(row => JSON.parse(row.body)); }
-  bot(id) { const row = this.db.prepare('SELECT body FROM bots WHERE id=?').get(id); return row ? JSON.parse(row.body) : null; }
+  bots() { return this.db.prepare('SELECT body FROM bots ORDER BY rowid').all().map(row => JSON.parse(row.body)).filter(bot => !bot.deletedAt); }
+  deletedBots() { return this.db.prepare('SELECT body FROM bots ORDER BY rowid DESC').all().map(row => JSON.parse(row.body)).filter(bot => bot.deletedAt); }
+  bot(id, includeDeleted = false) {
+    const row = this.db.prepare('SELECT body FROM bots WHERE id=?').get(id);
+    const bot = row ? JSON.parse(row.body) : null;
+    return bot && (!bot.deletedAt || includeDeleted) ? bot : null;
+  }
   saveBot(bot) { this.db.prepare('INSERT OR REPLACE INTO bots VALUES (?, ?)').run(bot.id, JSON.stringify(bot)); }
   orders() { return this.db.prepare('SELECT body FROM orders ORDER BY rowid DESC').all().map(row => JSON.parse(row.body)); }
   order(value) { this.db.prepare('INSERT INTO orders VALUES (?, ?, ?)').run(value.id, value.botId, JSON.stringify(value)); }

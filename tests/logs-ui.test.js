@@ -37,11 +37,60 @@ test('every bot card includes Logs beside Start/Pause and Configure/Close, inclu
   let card = f.run('botCard(state.bots[0])');
   assert.match(card, /data-action="edit".*data-action="logs"/s);
   assert.match(card, /aria-label="View logs for First bot"/);
+  assert.match(card, /data-action="delete"[^>]*>Move to bin/);
   f.context.snapshot.bots[0].status = 'running';
   f.context.snapshot.bots[0].position = { qty: 1, entry: 1400, stop: 1386, target: 1428, maxLoss: 16 };
   card = f.run('botCard(state.bots[0])');
   assert.match(card, /data-action="pause"/);
   assert.match(card, /data-action="close".*data-action="logs"/s);
+  assert.equal(card.includes('data-action="delete"'), false);
+  f.context.snapshot.bots[0].status = 'paused';
+  assert.match(f.run('botCard(state.bots[0])'), /data-action="delete"[^>]*disabled/);
+});
+test('bin shows removed bots with working logs and no trading controls', async () => {
+  const f = fixture();
+  f.context.snapshot.deletedBots = [{ ...f.context.snapshot.bots.shift(), deletedAt: '2026-11-09T04:30:00Z' }];
+  f.context.snapshot.deletedBots[0].name = 'Removed <script>bot</script>';
+  f.run("page = 'bin'; renderPage()");
+  const html = f.nodes['#main'].innerHTML;
+  assert.match(html, /Removed &lt;script&gt;bot&lt;\/script&gt;/);
+  assert.match(html, /data-action="logs"/);
+  for (const action of ['start', 'pause', 'edit', 'delete', 'close']) assert.equal(html.includes(`data-action="${action}"`), false);
+  const opening = f.listeners.click[0]({ target: { closest: () => ({ dataset: { action: 'logs', id: 'first' } }) } });
+  assert.equal(f.requests[0].path, '/api/bots/first/logs?date=2026-11-09');
+  await f.reply(0, [row()]);
+  await opening;
+  assert.match(f.nodes['#main'].innerHTML, /data-page="bin"/);
+  assert.match(f.nodes['#main'].innerHTML, /Removed &lt;script&gt;bot&lt;\/script&gt; logs/);
+});
+test('moving a bot to the bin requires confirmation and sends the protected mutation', async () => {
+  const f = fixture();
+  const target = { dataset: { action: 'delete', id: 'first' } };
+  const click = () => f.listeners.click[0]({ target: { closest: () => target } });
+  let confirmed = false, prompt, calls = [];
+  f.context.window.confirm = message => { prompt = message; return confirmed; };
+  f.context.fetch = async (path, options) => {
+    calls.push({ path, options });
+    if (path.endsWith('/delete')) {
+      f.context.snapshot.deletedBots = [{ ...f.context.snapshot.bots.shift(), deletedAt: '2026-11-09T04:30:00Z' }];
+      return { ok: true, json: async () => ({}) };
+    }
+    return { ok: true, json: async () => f.context.snapshot };
+  };
+  f.context.snapshot.csrf = 'fixture-csrf';
+  f.nodes['#bot-count'] = {};
+  f.nodes['#emergency'] = { classList: { toggle() {} } };
+  await click();
+  assert.match(prompt, /Saved logs and paper order history will be kept/);
+  assert.equal(calls.length, 0);
+  confirmed = true;
+  f.run("page = 'bots'; refreshing = null");
+  await click();
+  assert.equal(calls[0].path, '/api/bots/first/delete');
+  assert.equal(calls[0].options.method, 'POST');
+  assert.equal(calls[0].options.headers['X-Tradegrok-CSRF'], 'fixture-csrf');
+  assert.equal(f.nodes['#bot-count'].textContent, 1);
+  assert.match(f.nodes['#main'].innerHTML, /Bot bin \(1\)/);
 });
 test('Logs opens a bot-scoped file view with loading, safe JSON, refresh and older-record controls', async () => {
   const f = fixture();

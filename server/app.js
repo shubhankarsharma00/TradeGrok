@@ -71,7 +71,7 @@ export function createApp(store, broker, { now = () => Date.now(), smartapi = ne
         const settings = store.settings();
         const latest = store.latestBacktest();
         return json(200, {
-          csrf, settings, bots: store.bots(), orders: store.orders().slice(0, 100), events: store.events(),
+          csrf, settings, bots: store.bots(), deletedBots: store.deletedBots(), orders: store.orders().slice(0, 100), events: store.events(),
           equity: store.equity(), quotes: [...engine.quotes.values()], presets, exitPresets, instruments,
           metrics: metrics(store, engine.quotes, now()), connection: broker.status(), smartapi: smartapi.status(callbackUrl),
           account: broker.account, engine: { busy: engine.busy, lastTick: engine.lastTick, error: engine.error, marketWindows: [...new Set(store.bots().map(bot => bot.symbol))].map(symbol => executionWindow(now(), symbol)), analysisLog: { ...(analysisLog ? analysisLog.status(now()) : { enabled: false }), error: engine.loggingError } },
@@ -82,7 +82,7 @@ export function createApp(store, broker, { now = () => Date.now(), smartapi = ne
       }
       const logsMatch = url.pathname.match(/^\/api\/bots\/([a-f0-9-]+)\/logs$/);
       if (req.method === 'GET' && logsMatch) {
-        if (!store.bot(logsMatch[1])) throw new AppError('Bot not found.', 404);
+        if (!store.bot(logsMatch[1], true)) throw new AppError('Bot not found.', 404);
         if (!analysisLog) throw new AppError('Local analysis logging is not enabled for this server.', 503, 'ANALYSIS_LOG');
         const cursor = url.searchParams.get('before');
         if (cursor !== null && !/^\d{1,16}$/.test(cursor)) throw new AppError('Invalid log page cursor.', 400, 'ANALYSIS_CURSOR');
@@ -160,7 +160,7 @@ export function createApp(store, broker, { now = () => Date.now(), smartapi = ne
         });
         return json(201, bot);
       }
-      const match = url.pathname.match(/^\/api\/bots\/([a-f0-9-]+)\/(start|pause|close|configure)$/);
+      const match = url.pathname.match(/^\/api\/bots\/([a-f0-9-]+)\/(start|pause|close|configure|delete)$/);
       if (req.method === 'POST' && match) {
         const input = await body(req);
         let bot = store.bot(match[1]);
@@ -188,6 +188,10 @@ export function createApp(store, broker, { now = () => Date.now(), smartapi = ne
           } else if (action === 'configure') {
             if (bot.status === 'running' || bot.position) throw new AppError('Pause the bot and close its paper position before editing.', 409);
             Object.assign(bot, validateBot(input, store.settings()), { samples: [], exitSamples: [], previous: null, message: 'Entry and exit configuration updated.' });
+          } else if (action === 'delete') {
+            if (bot.status !== 'paused' || bot.position) throw new AppError('Pause the bot and close its paper position before moving it to the bin.', 409);
+            bot.deletedAt = new Date(now()).toISOString();
+            bot.message = 'Moved to the bin. Saved logs and paper order history are retained.';
           } else {
             engine.exit(bot, engine.quotes.get(bot.symbol), 'Manual paper close', analysis);
           }
