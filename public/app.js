@@ -13,6 +13,7 @@ let symbolSearchTimer;
 let symbolSearchRevision = 0;
 let logView = null;
 let logRevision = 0;
+const noticeStates = new Map();
 const pages = { overview: 'Overview', bots: 'My bots', orders: 'Order journal', broker: 'Broker connection', settings: 'Risk & settings', logs: 'Bot logs' };
 
 async function api(path, input) {
@@ -51,12 +52,17 @@ async function refresh(render = true) {
 function heading(title, subtitle, action = true) {
   return `<div class="page-heading"><div><span class="eyebrow">YOUR PERSONAL TRADING DESK</span><h1>${title}</h1><p>${subtitle}</p></div>${action ? '<button class="button primary" data-action="create"><span>+</span> Create bot</button>' : ''}</div>`;
 }
+function collapsibleNotice(id, tone, title, content, alert = false) {
+  const signature = JSON.stringify([tone, title, content]);
+  if (noticeStates.get(id)?.signature !== signature) noticeStates.set(id, { signature, open: tone === 'danger' });
+  return `<details class="notice collapsible-notice ${tone}" data-notice-id="${escape(id)}"${noticeStates.get(id).open ? ' open' : ''}><summary>${title}</summary><div class="notice-content"${alert ? ' role="alert"' : ''}>${content}</div></details>`;
+}
 function banners() {
-  return `${state.settings.emergency ? '<div class="notice danger"><strong>Entry lock active.</strong> All bots paused. Existing paper exit strategies, stops and targets are still monitored; positions were not flattened.</div>' : ''}
-    ${state.engine.error ? `<div class="notice danger"><strong>Market data unavailable:</strong> ${escape(state.engine.error)} Last successful cycle: ${date(state.engine.lastTick)}.</div>` : ''}
-    ${state.engine.analysisLog?.error ? `<div class="notice danger" role="alert"><strong>Analysis log incomplete:</strong> ${escape(state.engine.analysisLog.error)}</div>` : ''}
-    ${(state.engine.marketWindows ?? []).filter(window => window.specialSession).map(window => `<div class="notice ${window.open ? 'subtle' : 'warning'}"><strong>NSE:${escape(window.symbol)} Muhurat paper window ${window.open ? 'open' : 'closed'}.</strong> ${escape(window.description)} No automatic liquidation at close; existing exit rules remain unchanged.</div>`).join('')}
-    ${state.metrics.unavailablePositions ? '<div class="notice warning">Some open positions have no saved valid SmartAPI quote. Equity and unrealised P&amp;L are unavailable until prices are received. No fills on stale prices.</div>' : state.metrics.stalePositions ? `<div class="notice warning">Equity and unrealised P&amp;L use last known SmartAPI prices. Oldest position quote: ${date(state.metrics.valuationAt)} IST. These are not live values. No fills on stale prices.</div>` : ''}`;
+  return `${state.settings.emergency ? collapsibleNotice('entry-lock', 'danger', 'Entry lock active.', 'All bots paused. Existing paper exit strategies, stops and targets are still monitored; positions were not flattened.') : ''}
+    ${state.engine.error ? collapsibleNotice('market-data', 'danger', 'Market data unavailable.', `${escape(state.engine.error)} Last successful cycle: ${date(state.engine.lastTick)}.`) : ''}
+    ${state.engine.analysisLog?.error ? collapsibleNotice('analysis-log', 'danger', 'Analysis log incomplete.', escape(state.engine.analysisLog.error), true) : ''}
+    ${(state.engine.marketWindows ?? []).filter(window => window.specialSession).map(window => collapsibleNotice(`market-window:${window.symbol}`, window.open ? 'subtle' : 'warning', `NSE:${escape(window.symbol)} Muhurat paper window ${window.open ? 'open' : 'closed'}.`, `${escape(window.description)} No automatic liquidation at close; existing exit rules remain unchanged.`)).join('')}
+    ${state.metrics.unavailablePositions ? collapsibleNotice('stale-positions', 'warning', 'Some open positions have no saved valid SmartAPI quote.', 'Equity and unrealised P&amp;L are unavailable until prices are received. No fills on stale prices.') : state.metrics.stalePositions ? collapsibleNotice('stale-positions', 'warning', 'Equity and unrealised P&amp;L use last known SmartAPI prices.', `Oldest position quote: ${date(state.metrics.valuationAt)} IST. These are not live values. No fills on stale prices.`) : ''}`;
 }
 function sourcePill() { return '<span class="pill mint">SMARTAPI MARKET DATA</span>'; }
 function exitWindowOpen(symbol) {
@@ -123,7 +129,7 @@ function overview() {
 }
 function botsPage() {
   return `${heading('Rules into action.', 'Configure, start, and monitor your predefined paper strategies.')}
-    ${banners()}<div class="notice subtle">${sourcePill()}<span>Every market price comes from Angel One. Paper cash and fills are simulated and kept separate from your actual account.</span></div>
+    ${banners()}${collapsibleNotice('paper-data', 'subtle', sourcePill(), 'Every market price comes from Angel One. Paper cash and fills are simulated and kept separate from your actual account.')}
     <div class="bot-grid">${state.bots.map(botCard).join('')}<button class="new-bot-card" data-action="create"><span>+</span><strong>A rule worth testing?</strong><p>Give it a name, a level, and a risk limit.</p><small>Create paper bot ↗</small></button></div>
     ${backtestPanel()}
     <section class="panel preset-panel"><div class="section-heading"><h2>Entry strategies</h2><span class="pill gray">LONG-ONLY · NSE CASH</span></div><div class="preset-grid">${state.presets.map(preset => `<div><h3>${escape(preset.name)}</h3><p>${escape(preset.description)}</p>${(preset.sources ?? []).map(source => `<p><a href="${escape(source.url)}" target="_blank" rel="noopener noreferrer">${escape(source.name)}</a></p>`).join('')}</div>`).join('')}</div><p class="feed-note">Breakouts use sampled prices; moving averages use polling samples, not exchange candles. No averaging down, leverage, shorts, or derivatives. Swing defaults are illustrative, not a backtested edge.</p></section>
@@ -181,6 +187,10 @@ function settingsPage() {
     <div class="notice subtle">Entry lock pauses new entries, not exit monitoring. Limits apply to new entries; lowering limits does not resize or close existing positions. Runs only while the local server is awake.</div></section></div>`;
 }
 function renderPage() {
+  document.querySelectorAll('details[data-notice-id]').forEach(notice => {
+    const saved = noticeStates.get(notice.dataset.noticeId);
+    if (saved) saved.open = notice.open;
+  });
   $('#page-label').textContent = pages[page];
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.page === page));
   $('#main').innerHTML = page === 'logs' ? logsPage() : page === 'overview' ? overview() : page === 'bots' ? botsPage() : page === 'broker' ? brokerPage() : page === 'settings' ? settingsPage() :
