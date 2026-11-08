@@ -22,6 +22,8 @@ A local-first trading desk for Indian markets. Connect Angel One SmartAPI, view 
 | Order journal and analysis | Inspect simulated fills and per-cycle decision records, including blocked conditions. |
 | Historical replay | A deliberately scoped RELIANCE SMA backtest using actual five-minute broker candles. |
 
+Dashboard notices have expandable details: select a headline to expand or collapse it. Routine notices start collapsed; critical errors and the entry lock start expanded. Selections survive automatic refreshes and page changes within the current browser session; changed notice content resets to its default.
+
 The interface is vanilla JavaScript and CSS, with locally hosted Silkscreen headings. The server uses Node's built-in HTTP and SQLite modules: **no third-party runtime dependencies, frontend build or Python SDK required.**
 
 ## Quick start
