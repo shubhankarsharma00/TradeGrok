@@ -15,6 +15,19 @@ test('new workspaces have only SmartAPI prices and no invented instrument or ent
     assert.ok(presets.filter(item => item.id !== 'sma').every(item => item.defaults.level === null));
   } finally { store.close(); }
 });
+test('valuation quotes persist across database reopen and never regress to older timestamps', t => {
+  const dir = mkdtempSync(join(tmpdir(), 'tradegrok-valuation-'));
+  t.after(() => rmSync(dir, { recursive: true }));
+  const path = join(dir, 'test.sqlite');
+  let store = new Store(path);
+  const quote = { symbol: 'RELIANCE', source: 'angel', price: 1400, at: '2026-11-09T09:59:00+05:30' };
+  store.saveValuationQuote(quote);
+  store.saveValuationQuote({ ...quote, price: 1300, at: '2026-11-09T09:58:00+05:30' });
+  store.close();
+  store = new Store(path);
+  try { assert.deepEqual(store.valuationQuotes(), [quote]); }
+  finally { store.close(); }
+});
 
 test('migration archives retired feed history and resets its gains without rewriting real-price paper trades', t => {
   const dir = mkdtempSync(join(tmpdir(), 'tradegrok-migration-'));
