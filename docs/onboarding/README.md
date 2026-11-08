@@ -78,7 +78,13 @@ References: [Deployment guide](https://developers.cloudflare.com/workers/get-sta
 
    Do not register a loopback URL or `/healthz`. TradeGrok has no order-postback endpoint; do not use the login callback as a postback.
 
-3. Create `.env` from `.env.example` only if it does not already exist. Edit it locally in the repository root, preserving other settings:
+3. In guide step 3, enter your **HTTPS relay URL** and **SmartAPI API key**, then select **Save to local .env**. The URL is the origin only, without `/auth/smartapi/callback`.
+
+   **The form saves directly to this computer's `.env`, not to a cloud service.** Its request goes only to the local TradeGrok server. The key is masked, never prefilled, never logged and never returned in dashboard state. Saving clears the entered key from the form. Angel One receives the key when you use its login/API.
+
+   Saving preserves existing environment settings and writes with owner-only permissions. If `PORT` is missing, the current local server port is added. Restart TradeGrok to load the new settings; saving does not change the active connection or place an order. Environment variables set by your shell still take precedence over `.env`.
+
+   **Prefer editing the file yourself?** Expand **Edit .env directly instead**. Create `.env` from `.env.example` only if it does not already exist, then edit it locally in the repository root:
 
    ```dotenv
    PORT=3100

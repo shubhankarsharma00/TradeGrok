@@ -7,6 +7,7 @@ function fixture({ search = '', hash = '#broker', configured = false, relay = fa
   const listeners = {};
   const nodes = {
     '#main': { innerHTML: '' }, '#page-label': {}, '#clock': {},
+    '#toast': { classList: { toggle() {} } },
     '#bot-form': { addEventListener() {} },
     '#setup-title': { focus() { this.focused = true; } }
   };
@@ -27,12 +28,14 @@ function fixture({ search = '', hash = '#broker', configured = false, relay = fa
       configured, callbackUrl: relay ? 'https://my-relay.workers.dev/auth/smartapi/callback' : 'http://127.0.0.1:3101/auth/smartapi/callback',
       status: configured ? 'ready' : 'not_configured', message: 'Not connected'
     },
-    connection: { status: 'disconnected', message: 'Not verified' }, account: null
+    connection: { status: 'disconnected', message: 'Not verified' }, account: null,
+    smartapiConfigWritable: true
   };
   const run = code => runInContext(code, context);
   run('state = snapshot');
   const click = dataset => listeners.click({ target: { closest: () => ({ dataset }) } });
-  return { context, nodes, run, click };
+  const submit = form => listeners.submit({ target: form, preventDefault() {} });
+  return { context, nodes, run, click, submit };
 }
 
 test('broker deep link starts an account-first guide with official KYC links and no credential inputs', () => {
@@ -184,4 +187,89 @@ test('trimmed guide retains setup actions without repeated strategy and backgrou
   assert.doesNotMatch(cloudflare, /provider-internal retention|Free-plan limits|workers\.dev HTTPS/);
   f.run('onboardingStep = 2');
   assert.match(f.run('brokerOnboarding()'), /Restart with <code>npm start<\/code>/);
+});
+
+function configForm(f) {
+  const button = { disabled: false };
+  const form = {
+    id: 'broker-config-form', dataset: {},
+    elements: {
+      apiKey: { value: 'synthetic-ui-key' },
+      relayOrigin: { value: 'https://new-relay.workers.dev', defaultValue: '' }
+    },
+    querySelector: () => button
+  };
+  f.nodes['#broker-config-form'] = form;
+  f.nodes['#broker-config-error'] = { textContent: '' };
+  f.nodes['#broker-config-status'] = { textContent: '' };
+  return { form, button };
+}
+
+test('setup exposes a masked key field, local-save privacy notice and optional manual .env instructions', () => {
+  const f = fixture({ relay: true });
+  f.run('onboardingStep = 2');
+  const html = f.run('brokerOnboarding()');
+  assert.match(html, /<form id="broker-config-form" aria-describedby="broker-config-privacy">/);
+  assert.match(html, /name="apiKey" type="password" required/);
+  assert.doesNotMatch(html, /name="apiKey"[^>]*value=/);
+  assert.match(html, /name="relayOrigin" type="url"/);
+  assert.match(html, /not uploaded to a cloud service by this form/);
+  assert.match(html, /Your API key is sent to Angel One/);
+  assert.match(html, /Edit .env directly instead/);
+  assert.match(html, /Save to local .env/);
+});
+
+test('local save uses the protected endpoint, clears the key and leaves active configuration unchanged', async () => {
+  const f = fixture();
+  const { form, button } = configForm(f);
+  f.context.snapshot.csrf = 'test-csrf';
+  let request;
+  f.context.fetch = async (path, options) => {
+    request = { path, options };
+    return { ok: true, json: async () => ({ saved: true, restartRequired: true }) };
+  };
+  await f.submit(form);
+  assert.equal(request.path, '/api/smartapi/config');
+  assert.equal(request.options.headers['X-Tradegrok-CSRF'], 'test-csrf');
+  assert.deepEqual(JSON.parse(request.options.body), { apiKey: 'synthetic-ui-key', relayOrigin: 'https://new-relay.workers.dev' });
+  assert.equal(form.elements.apiKey.value, '');
+  assert.equal(f.run('brokerConfigDirty()'), false);
+  assert.equal(f.context.snapshot.smartapi.configured, false);
+  assert.equal(f.run('brokerConfigSaved'), true);
+  assert.match(f.nodes['#broker-config-status'].textContent, /Restart TradeGrok/);
+  assert.equal(button.disabled, false);
+});
+
+test('failed saves show a retryable error rather than success and keep entered fields', async () => {
+  const f = fixture();
+  const { form, button } = configForm(f);
+  f.context.fetch = async () => ({ ok: false, json: async () => ({ error: 'Could not securely save the local .env.' }) });
+  await f.submit(form);
+  assert.match(f.nodes['#broker-config-error'].textContent, /Could not securely save/);
+  assert.equal(f.run('brokerConfigSaved'), false);
+  assert.equal(form.elements.apiKey.value, 'synthetic-ui-key');
+  assert.equal(button.disabled, false);
+});
+
+test('unsaved settings are detected after blur and navigation needs confirmation; pending saves cannot navigate', async () => {
+  const f = fixture();
+  const { form } = configForm(f);
+  f.run('page = "broker"; onboardingStep = 2');
+  f.context.window.confirm = () => false;
+  assert.equal(f.run('brokerConfigDirty()'), true);
+  await f.click({ setupStep: '3' });
+  assert.equal(f.run('onboardingStep'), 2);
+  await f.click({ page: 'orders' });
+  assert.equal(f.run('page'), 'broker');
+  let resolve;
+  f.context.fetch = () => new Promise(done => { resolve = done; });
+  const pending = f.submit(form);
+  assert.equal(form.elements.apiKey.disabled, true);
+  assert.equal(form.elements.relayOrigin.disabled, true);
+  f.context.window.confirm = () => { throw new Error('Should not prompt during save'); };
+  await f.click({ page: 'orders' });
+  assert.equal(f.run('page'), 'broker');
+  resolve({ ok: true, json: async () => ({ saved: true, restartRequired: true }) });
+  await pending;
+  assert.equal(form.elements.apiKey.disabled, false);
 });

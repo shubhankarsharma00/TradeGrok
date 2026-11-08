@@ -18,7 +18,7 @@ assets.set('/fonts/OFL.txt', ['fonts/OFL.txt', 'text/plain']);
 assets.set('/auth/smartapi/return', ['smartapi-return.html', 'text/html']);
 assets.set('/smartapi-return.js', ['smartapi-return.js', 'text/javascript']);
 
-export function createApp(store, broker, { now = () => Date.now(), smartapi = new SmartAPI({ now }), smartapiRelayOrigin = '', history = new SmartHistory(smartapi, { now }), analysisLog = null } = {}) {
+export function createApp(store, broker, { now = () => Date.now(), smartapi = new SmartAPI({ now }), smartapiRelayOrigin = '', history = new SmartHistory(smartapi, { now }), analysisLog = null, configFile = null } = {}) {
   const relayOrigin = smartapiRelayOrigin ? smartApiOrigin(smartapiRelayOrigin) : '';
   const engine = new Engine(store, broker, { now, analysisLog });
   const csrf = randomBytes(32).toString('hex');
@@ -73,7 +73,7 @@ export function createApp(store, broker, { now = () => Date.now(), smartapi = ne
         return json(200, {
           csrf, settings, bots: store.bots(), deletedBots: store.deletedBots(), orders: store.orders().slice(0, 100), events: store.events(),
           equity: store.equity(), quotes: [...engine.quotes.values()], presets, exitPresets, instruments,
-          metrics: metrics(store, engine.quotes, now()), connection: broker.status(), smartapi: smartapi.status(callbackUrl),
+          metrics: metrics(store, engine.quotes, now()), connection: broker.status(), smartapi: smartapi.status(callbackUrl), smartapiConfigWritable: Boolean(configFile),
           account: broker.account, engine: { busy: engine.busy, lastTick: engine.lastTick, error: engine.error, marketWindows: [...new Set(store.bots().map(bot => bot.symbol))].map(symbol => executionWindow(now(), symbol)), analysisLog: { ...(analysisLog ? analysisLog.status(now()) : { enabled: false }), error: engine.loggingError } },
           backtest: latest ? { id: latest.id, createdAt: latest.createdAt, status: latest.status, evaluated: latest.sessions.evaluated, summary: latest.result?.summary || null, coverage: latest.coverage } : null,
           backtestReplaySupported: true,
@@ -125,6 +125,12 @@ export function createApp(store, broker, { now = () => Date.now(), smartapi = ne
           if (run.status === 'blocked') return json(422, { error: 'Coverage incomplete or zero-volume/unexpected sessions found. Dataset saved; no result computed and no older sessions substituted.', code: 'BACKTEST_COVERAGE', backtest: run });
           return json(200, run);
         } finally { backtesting = false; }
+      }
+      if (req.method === 'POST' && url.pathname === '/api/smartapi/config') {
+        const input = await body(req);
+        if (origin !== localOrigin || req.headers.origin !== localOrigin) throw new AppError('Save broker settings from the local 127.0.0.1 dashboard only.', 403, 'SMARTAPI_ORIGIN');
+        if (!configFile) throw new AppError('Local configuration saving is not enabled. Edit .env directly.', 503, 'SMARTAPI_CONFIG_FILE');
+        return json(200, configFile.save(input, { port: server.address().port }));
       }
       if (req.method === 'POST' && url.pathname === '/api/smartapi/login') {
         await body(req);
