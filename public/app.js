@@ -20,7 +20,7 @@ const noticeStates = new Map();
 let onboardingStep = smartApiResult ? 3 : 0;
 let onboardingOpen = false;
 let brokerConfigSaved = false;
-const pages = { overview: 'Overview', bots: 'My bots', bin: 'Bot bin', orders: 'Order journal', broker: 'Broker connection', settings: 'Risk & settings', logs: 'Bot logs' };
+const pages = { overview: 'Overview', bots: 'My bots', orders: 'Order journal', broker: 'Broker connection', settings: 'Risk & settings', logs: 'Bot logs' };
 
 async function api(path, input) {
   const response = await fetch(path, input === undefined ? { cache: 'no-store' } : {
@@ -142,18 +142,19 @@ function overview() {
 }
 function botsPage() {
   return `${heading('Rules into action.', 'Configure, start, and monitor your predefined paper strategies.')}
-    ${removableNotice('bot-bin-help', 'subtle', 'Paused bots without open positions can be moved to the bin.', `<button class="text-button" data-page="bin">Bot bin (${(state.deletedBots ?? []).length})</button>`)}
+    ${removableNotice('bot-bin-help', 'subtle', 'Paused bots without open positions can be moved to the bin below.', `<button class="text-button" data-page="bots" data-section="bot-bin">Bot bin (${(state.deletedBots ?? []).length})</button>`)}
     ${banners()}${collapsibleNotice('paper-data', 'subtle', sourcePill(), 'Every market price comes from Angel One. Paper cash and fills are simulated and kept separate from your actual account.')}
     <div class="bot-grid">${state.bots.map(botCard).join('')}<button class="new-bot-card" data-action="create"><span>+</span><strong>A rule worth testing?</strong><p>Give it a name, a level, and a risk limit.</p><small>Create paper bot ↗</small></button></div>
+    ${botBinSection()}
     ${backtestPanel()}
     ${backtestLearnMore()}`;
 }
-function binPage() {
+function botBinSection() {
   const bots = state.deletedBots ?? [];
-  return `<button class="text-button" data-page="bots">Back to my bots</button>
-    ${heading('Bot bin', 'Removed bots no longer run or count toward your bot limit. Their saved logs and order journal remain available.', false)}
-    ${banners()}
-    ${bots.length ? `<div class="bot-grid">${bots.map(bot => `<article class="bot-card"><span class="pill gray">In bin</span><h3>${escape(bot.name)}</h3><p class="bot-sub">NSE:${escape(bot.symbol)}</p><p class="bot-message">Removed ${date(bot.deletedAt)} IST</p><div class="bot-actions"><button class="button secondary small" data-action="logs" data-id="${bot.id}" aria-label="View logs for ${escape(bot.name)}">Logs</button><button class="button secondary small" data-page="orders">Order journal</button></div></article>`).join('')}</div>` : '<div class="empty compact"><h2>The bot bin is empty</h2><p>Bots moved to the bin will appear here with their saved logs.</p></div>'}`;
+  return `<section id="bot-bin" aria-labelledby="bot-bin-title">
+    <div class="section-heading bot-section-heading"><div><h2 id="bot-bin-title" tabindex="-1">Bot bin (${bots.length})</h2><p class="muted">Removed bots no longer run or count toward your bot limit. Their saved logs and order journal remain available.</p></div></div>
+    ${bots.length ? `<div class="bot-grid">${bots.map(bot => `<article class="bot-card"><span class="pill gray">In bin</span><h3>${escape(bot.name)}</h3><p class="bot-sub">NSE:${escape(bot.symbol)}</p><p class="bot-message">Removed ${date(bot.deletedAt)} IST</p><div class="bot-actions"><button class="button secondary small" data-action="logs" data-id="${bot.id}" aria-label="View logs for ${escape(bot.name)}">Logs</button><button class="button secondary small" data-page="orders">Order journal</button></div></article>`).join('')}</div>` : '<div class="empty compact"><h3>The bot bin is empty</h3><p>Bots moved to the bin will appear here with their saved logs.</p></div>'}
+    </section>`;
 }
 function backtestPanel() {
   const run = state.backtest;
@@ -308,7 +309,7 @@ function renderPage() {
   });
   $('#page-label').textContent = pages[page];
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.page === page));
-  $('#main').innerHTML = page === 'logs' ? logsPage() : page === 'overview' ? overview() : page === 'bots' ? botsPage() : page === 'bin' ? binPage() : page === 'broker' ? brokerPage() : page === 'settings' ? settingsPage() :
+  $('#main').innerHTML = page === 'logs' ? logsPage() : page === 'overview' ? overview() : page === 'bots' ? botsPage() : page === 'broker' ? brokerPage() : page === 'settings' ? settingsPage() :
     `${heading('Every fill, accounted for.', 'An immutable journal of simulated entries and exits. Prices and fees in INR.', false)}${banners()}<div class="notice subtle">Every row is a paper fill, never an Angel One order. Net exit P&amp;L excludes entry fees; total portfolio P&amp;L includes both sides. Feed labels remain attached to historical fills.</div><section class="panel">${ordersTable()}</section>`;
 }
 function logsPage() {
@@ -318,7 +319,7 @@ function logsPage() {
   const backtestDecisions = { ...decisions, buy: 'Simulated buy', sell: 'Simulated sell', signal: 'Signal' };
   const today = new Date(Date.parse(state.serverTime) + 19800000).toISOString().slice(0, 10);
   const inBin = (state.deletedBots ?? []).some(bot => bot.id === view.id);
-  return `<button class="text-button" data-page="${inBin ? 'bin' : 'bots'}">← Back to ${inBin ? 'bot bin' : 'my bots'}</button>
+  return `<button class="text-button" data-page="bots"${inBin ? ' data-section="bot-bin"' : ''}>← Back to ${inBin ? 'bot bin' : 'my bots'}</button>
     <div class="page-heading logs-heading"><div><h1 id="logs-title" tabindex="-1">${escape(view.name)} logs</h1><p>NSE:${escape(view.symbol)} · Every saved analysis, including checks that did not trade.</p></div></div>
     ${banners()}
     <section class="panel logs-panel" aria-busy="${view.loading}">
@@ -465,7 +466,12 @@ document.addEventListener('click', async event => {
   }
   if (target.dataset.page) {
     if (!canLeaveBrokerConfig()) return;
-    page = target.dataset.page; renderPage(); window.scrollTo({ top: 0, behavior: 'instant' }); return;
+    page = target.dataset.page; renderPage();
+    if (target.dataset.section === 'bot-bin') {
+      $('#bot-bin').scrollIntoView({ behavior: 'instant' });
+      $('#bot-bin-title').focus({ preventScroll: true });
+    } else window.scrollTo({ top: 0, behavior: 'instant' });
+    return;
   }
   const action = target.dataset.action;
   if (action === 'backtest-results') return openBacktestResults();
