@@ -24,6 +24,8 @@ A local-first trading desk for Indian markets. Connect Angel One SmartAPI, view 
 
 Dashboard notices have expandable details: select a headline to expand or collapse it. Routine notices start collapsed; critical errors and the entry lock start expanded. Selections survive automatic refreshes and page changes within the current browser session; changed notice content resets to its default.
 
+Broker connection keeps login, verification, status and the callback URL visible. Setup instructions, session details and paper-execution information are collapsed by default; verification failures stay expanded.
+
 The interface is vanilla JavaScript and CSS, with locally hosted Silkscreen headings. The server uses Node's built-in HTTP and SQLite modules: **no third-party runtime dependencies, frontend build or Python SDK required.**
 
 ## Quick start
@@ -77,6 +79,8 @@ SMARTAPI_RELAY_ORIGIN=https://tradegrok-smartapi.YOUR_SUBDOMAIN.workers.dev
 Replace both placeholders before connecting. Cloudflare is the recommended free HTTPS relay; you can instead set `SMARTAPI_RELAY_ORIGIN` to your own Azure App Service's exact HTTPS origin. Restart `npm start` after changing configuration. Do not copy someone else's key or deployment URL. There is no client PIN, password, client code or TOTP-secret setting in TradeGrok: those belong in Angel One's hosted login.
 
 ## Set up Angel One and SmartAPI
+
+Open **Broker connection** in the dashboard (or **http://127.0.0.1:3100/#broker**) for the interactive setup guide: Angel One account/KYC, Cloudflare HTTPS relay, SmartAPI app and local `.env`, then hosted login and read-only verification. The guide starts collapsed; select its heading to expand or collapse it. Use Back/Next or select a step directly; the selected step and expanded/collapsed state survive dashboard refreshes and page navigation in the current tab. Returning from hosted login opens the verification step. Step 4 includes a **Click here to test Angel One login** action using the same browser-bound login flow as the connection controls; it is enabled only after the server has loaded an API key and HTTPS relay. The guide links to official instructions and detects local configuration without displaying secrets. Navigation is not proof of external setup: you still create accounts, deploy the relay and edit `.env` yourself.
 
 ### 1. Prepare your broker account
 
