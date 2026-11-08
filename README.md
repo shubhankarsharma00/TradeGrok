@@ -62,7 +62,9 @@ Open **http://127.0.0.1:3100**. A fresh installation has 100,000 INR of simulate
 
 ### Configure `.env`
 
-Edit `.env` locally in your editor, not in GitHub, an issue, a screenshot or chat:
+Use **Broker connection → Broker setup guide → SmartAPI & .env** to enter the relay origin and API key, then select **Save to local .env**. The form sends values only to the local TradeGrok server and saves an owner-only `.env`; it does not upload them to GitHub or Cloudflare, log them, or return the saved key to the dashboard. Restart TradeGrok to load the saved configuration. Angel One receives the API key when you use its login/API.
+
+You can instead edit `.env` locally in your editor, not in GitHub, an issue, a screenshot or chat:
 
 ```dotenv
 PORT=3100
@@ -82,7 +84,7 @@ Replace both placeholders before connecting. Cloudflare is the recommended free 
 
 For a dedicated walkthrough, see [Broker onboarding and verification](docs/onboarding/README.md), including relay checks, login verification and troubleshooting.
 
-Open **Broker connection** in the dashboard (or **http://127.0.0.1:3100/#broker**) for the interactive setup guide: Angel One account/KYC, Cloudflare HTTPS relay, SmartAPI app and local `.env`, then hosted login and read-only verification. The guide starts collapsed; select its heading to expand or collapse it. Use Back/Next or select a step directly; the selected step and expanded/collapsed state survive dashboard refreshes and page navigation in the current tab. Returning from hosted login opens the verification step. Step 4 includes a **Click here to test Angel One login** action using the same browser-bound login flow as the connection controls; it is enabled only after the server has loaded an API key and HTTPS relay. The guide links to official instructions and detects local configuration without displaying secrets. Navigation is not proof of external setup: you still create accounts, deploy the relay and edit `.env` yourself.
+Open **Broker connection** in the dashboard (or **http://127.0.0.1:3100/#broker**) for the four-step setup guide. It starts collapsed and preserves the selected step and expanded/collapsed state across refreshes and page navigation. Step 3 saves the relay origin and API key to local `.env`, or shows instructions for editing it directly. Unsaved fields survive automatic refreshes; navigation asks before discarding them. Step 4 provides **Click here to test Angel One login**, enabled after restarting with the API key and HTTPS relay loaded. Returning from hosted login selects the verification step. You still create your own broker account and deploy the relay; navigating the guide does not certify setup.
 
 ### 1. Prepare your broker account
 

@@ -16,6 +16,7 @@ let logRevision = 0;
 const noticeStates = new Map();
 let onboardingStep = smartApiResult ? 3 : 0;
 let onboardingOpen = false;
+let brokerConfigSaved = false;
 const pages = { overview: 'Overview', bots: 'My bots', bin: 'Bot bin', orders: 'Order journal', broker: 'Broker connection', settings: 'Risk & settings', logs: 'Bot logs' };
 
 async function api(path, input) {
@@ -42,7 +43,7 @@ async function refresh(render = true) {
       $('#bot-count').textContent = state.bots.length;
       $('#emergency').textContent = state.settings.emergency ? 'Release entry lock' : 'Pause all entries';
       $('#emergency').classList.toggle('locked', state.settings.emergency);
-      if (render) renderPage();
+      if (render && !brokerConfigDirty()) renderPage();
     } catch (error) {
       if (!state) $('#main').innerHTML = `<div class="empty"><h2>Workspace unavailable</h2><p>${escape(error.message)}</p><button class="button primary" data-action="retry">Try again</button></div>`;
       else toast(`Dashboard refresh failed: ${error.message}`, true);
@@ -188,7 +189,16 @@ function brokerOnboarding() {
     <ol class="setup-steps">
       <li><strong>Create an app in SmartAPI</strong><p>Sign in → MyApps → Create App. Select access for account data, quotes and historical candles.</p></li>
       <li><strong>Set the Redirect URL</strong><p>Use your deployed hostname below. TradeGrok has no order-postback endpoint; do not use this callback as a postback.</p>${snippet(relayConfigured ? 'Configured Redirect URL' : 'Redirect URL template — replace YOUR_SUBDOMAIN', `${relayOrigin}/auth/smartapi/callback`)}</li>
-      <li><strong>Edit your local .env</strong><p>In the repository root, copy <code>.env.example</code> to <code>.env</code> only if .env is missing. Add your app's API key, not its secret key. Use the relay origin without the callback path.</p>${snippet('Local .env — replace placeholders', `PORT=${localPort}\nSMARTAPI_API_KEY=REPLACE_WITH_YOUR_OWN_API_KEY\nSMARTAPI_RELAY_ORIGIN=${relayOrigin}`)}<p>Keep .env private and out of Git. Do not add passwords or TOTP secrets.</p></li>
+      <li><strong>Save your settings locally</strong><form id="broker-config-form" aria-describedby="broker-config-privacy">
+      <div id="broker-config-privacy" class="notice subtle"><p><strong>Saved directly to this computer's .env, not uploaded to a cloud service by this form.</strong> Values go only to the local TradeGrok server. You can edit .env directly instead. Your API key is sent to Angel One when you use its login/API.</p></div>
+      <label>HTTPS relay URL<input name="relayOrigin" type="url" required maxlength="2048" autocomplete="off" spellcheck="false" placeholder="${escape(relayOrigin)}" value="${relayConfigured ? escape(relayOrigin) : ''}"></label>
+      <label>SmartAPI API key<input name="apiKey" type="password" required maxlength="256" autocomplete="off" spellcheck="false" autocapitalize="none" aria-describedby="broker-key-help"></label>
+      <p id="broker-key-help" class="form-help">Use the API key, not the secret key. Saved keys are never displayed or prefilled.</p>
+      <p id="broker-config-error" class="form-error" role="alert"></p>
+      <button class="button primary" type="submit" ${state.smartapiConfigWritable === true ? '' : 'disabled'}>Save to local .env</button>
+      <p id="broker-config-status" class="form-help" role="status">${brokerConfigSaved ? 'Saved locally. Restart TradeGrok with npm start to load these settings.' : 'Restart TradeGrok after saving. Keep .env private and out of Git.'}</p>
+      ${state.smartapiConfigWritable === true ? '' : '<p class="form-help">Restart TradeGrok to enable this form, or edit .env directly.</p>'}
+      </form><details class="setup-manual"><summary>Edit .env directly instead</summary><p>In the repository root, copy .env.example to .env only if it is missing. Preserve other settings and use the relay origin without the callback path:</p>${snippet('Local .env — replace placeholders', `PORT=${localPort}\nSMARTAPI_API_KEY=REPLACE_WITH_YOUR_OWN_API_KEY\nSMARTAPI_RELAY_ORIGIN=${relayOrigin}`)}</details></li>
       <li><strong>Check any IP allowlist and restart</strong><p>If required by your SmartAPI app, allowlist this computer's static public IPv4 (ask your ISP). Cloudflare HTTPS does not provide a static outbound IP. This command reports your current IP only:</p>${snippet('Check current public IPv4', 'curl --fail --silent --show-error --ipv4 https://api.ipify.org')}<p>Restart with <code>npm start</code>. PORT must match the relay's LOCAL_RETURN_ORIGIN. After a network change, recheck the allowlist and restart.</p></li>
     </ol><div class="setup-checks" aria-label="Detected local configuration"><span class="pill ${state.smartapi.configured ? 'mint' : 'amber'}">API KEY: ${state.smartapi.configured ? 'LOADED' : 'MISSING'}</span><span class="pill ${relayConfigured ? 'mint' : 'amber'}">HTTPS RELAY: ${relayConfigured ? 'CONFIGURED' : 'MISSING'}</span><button class="text-button" data-action="retry">Recheck local configuration</button></div>
     <p class="form-help">Checks show local configuration, not deployment health or broker access.</p>
@@ -370,6 +380,18 @@ function exitPresetHelp(applyDefaults = false) {
   }
   if (applyDefaults && timed) for (const [key, value] of Object.entries(preset.defaults)) form.elements[key].value = value;
 }
+function brokerConfigDirty() {
+  const form = $('#broker-config-form');
+  return Boolean(form && (form.dataset.saving === 'true' || form.elements.apiKey.value ||
+    form.elements.relayOrigin.value !== form.elements.relayOrigin.defaultValue));
+}
+function canLeaveBrokerConfig() {
+  if ($('#broker-config-form')?.dataset.saving === 'true') {
+    toast('Wait for the local settings save to finish.');
+    return false;
+  }
+  return !brokerConfigDirty() || window.confirm('Discard unsaved broker settings?');
+}
 document.addEventListener('click', async event => {
   const target = event.target.closest('button');
   if (!target) return;
@@ -377,11 +399,14 @@ document.addEventListener('click', async event => {
   if (target.dataset.setupStep !== undefined) {
     const step = Number(target.dataset.setupStep);
     if (!Number.isInteger(step) || step < 0 || step > 3) return;
+    if (step === onboardingStep) return;
+    if (!canLeaveBrokerConfig()) return;
     onboardingStep = step; renderPage();
     $('#setup-title').focus();
     return;
   }
   if (target.dataset.page) {
+    if (!canLeaveBrokerConfig()) return;
     page = target.dataset.page; renderPage(); window.scrollTo({ top: 0, behavior: 'instant' }); return;
   }
   const action = target.dataset.action;
@@ -389,7 +414,11 @@ document.addEventListener('click', async event => {
   if (action === 'edit') return openBot(state.bots.find(bot => bot.id === target.dataset.id));
   if (action === 'logs') return openLogs([...state.bots, ...(state.deletedBots ?? [])].find(bot => bot.id === target.dataset.id));
   if (action === 'logs-refresh' || action === 'logs-older') return loadLogs(action === 'logs-older');
-  if (action === 'retry') return refresh();
+  if (action === 'retry') {
+    if (!canLeaveBrokerConfig()) return;
+    $('#broker-config-form')?.reset();
+    return refresh();
+  }
   if (action === 'backtest' || action === 'backtest-replay') {
     target.disabled = true;
     target.textContent = 'Downloading real candles...';
@@ -473,6 +502,25 @@ $('#bot-form').addEventListener('submit', async event => {
   finally { button.disabled = false; }
 });
 document.addEventListener('submit', async event => {
+  if (event.target.id === 'broker-config-form') {
+    event.preventDefault();
+    const form = event.target, button = form.querySelector('[type=submit]');
+    if (form.dataset.saving === 'true') return;
+    button.disabled = true; form.dataset.saving = 'true'; $('#broker-config-error').textContent = '';
+    form.elements.apiKey.disabled = true; form.elements.relayOrigin.disabled = true;
+    try {
+      await api('/api/smartapi/config', { relayOrigin: form.elements.relayOrigin.value.trim(), apiKey: form.elements.apiKey.value.trim() });
+      form.elements.apiKey.value = '';
+      form.elements.relayOrigin.defaultValue = form.elements.relayOrigin.value;
+      brokerConfigSaved = true;
+      $('#broker-config-status').textContent = 'Saved locally. Restart TradeGrok with npm start to load these settings.';
+    } catch (error) { $('#broker-config-error').textContent = error.message; }
+    finally {
+      button.disabled = false; form.elements.apiKey.disabled = false; form.elements.relayOrigin.disabled = false;
+      delete form.dataset.saving;
+    }
+    return;
+  }
   if (event.target.id !== 'risk-form') return;
   event.preventDefault();
   const form = event.target, button = form.querySelector('[type=submit]');
@@ -491,6 +539,6 @@ clock(); setInterval(clock, 1000);
 void refresh();
 setInterval(() => {
   // Never replace a form the user is editing or a button with an in-flight action.
-  const editing = page === 'settings' || page === 'logs' || $('#bot-dialog').open || document.activeElement?.closest('#main');
+  const editing = page === 'settings' || page === 'logs' || brokerConfigDirty() || $('#bot-dialog').open || document.activeElement?.closest('#main');
   void refresh(!editing);
 }, 5000);
