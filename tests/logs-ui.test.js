@@ -47,21 +47,41 @@ test('every bot card includes Logs beside Start/Pause and Configure/Close, inclu
   f.context.snapshot.bots[0].status = 'paused';
   assert.match(f.run('botCard(state.bots[0])'), /data-action="delete"[^>]*disabled/);
 });
-test('bin shows removed bots with working logs and no trading controls', async () => {
+test('bots page embeds the bin after the active list with working logs and no removed-bot trading controls', async () => {
   const f = fixture();
   f.context.snapshot.deletedBots = [{ ...f.context.snapshot.bots.shift(), deletedAt: '2026-11-09T04:30:00Z' }];
   f.context.snapshot.deletedBots[0].name = 'Removed <script>bot</script>';
-  f.run("page = 'bin'; renderPage()");
+  f.run("page = 'bots'; renderPage()");
   const html = f.nodes['#main'].innerHTML;
+  assert.equal(f.nodes['#page-label'].textContent, 'My bots');
+  assert.ok(html.indexOf('Second bot') < html.indexOf('id="bot-bin"'));
+  assert.ok(html.indexOf('id="bot-bin"') < html.indexOf('safe play historical backtest'));
+  assert.doesNotMatch(html, /data-page="bin"/);
   assert.match(html, /Removed &lt;script&gt;bot&lt;\/script&gt;/);
   assert.match(html, /data-action="logs"/);
-  for (const action of ['start', 'pause', 'edit', 'delete', 'close']) assert.equal(html.includes(`data-action="${action}"`), false);
+  const bin = f.run('botBinSection()');
+  for (const action of ['start', 'pause', 'edit', 'delete', 'close']) assert.equal(bin.includes(`data-action="${action}"`), false);
   const opening = f.listeners.click[0]({ target: { closest: () => ({ dataset: { action: 'logs', id: 'first' } }) } });
   assert.equal(f.requests[0].path, '/api/bots/first/logs?date=2026-11-09');
   await f.reply(0, [row()]);
   await opening;
-  assert.match(f.nodes['#main'].innerHTML, /data-page="bin"/);
+  assert.match(f.nodes['#main'].innerHTML, /data-page="bots" data-section="bot-bin"/);
   assert.match(f.nodes['#main'].innerHTML, /Removed &lt;script&gt;bot&lt;\/script&gt; logs/);
+  let scrolled = false, focused = false;
+  f.nodes['#bot-bin'] = { scrollIntoView() { scrolled = true; } };
+  f.nodes['#bot-bin-title'] = { focus() { focused = true; } };
+  await f.listeners.click[0]({ target: { closest: () => ({ dataset: { page: 'bots', section: 'bot-bin' } }) } });
+  assert.equal(f.nodes['#page-label'].textContent, 'My bots');
+  assert.equal(scrolled, true);
+  assert.equal(focused, true);
+});
+test('bots page shows an empty bin below the list when there are no removed bots', () => {
+  const f = fixture();
+  const html = f.run('botsPage()');
+  assert.match(html, /Bot bin \(0\)/);
+  assert.match(html, /The bot bin is empty/);
+  assert.ok(html.indexOf('Second bot') < html.indexOf('id="bot-bin"'));
+  assert.doesNotMatch(html, /data-page="bin"/);
 });
 test('moving a bot to the bin requires confirmation and sends the protected mutation', async () => {
   const f = fixture();
