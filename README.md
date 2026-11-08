@@ -80,6 +80,8 @@ Replace both placeholders before connecting. Cloudflare is the recommended free 
 
 ## Set up Angel One and SmartAPI
 
+For a dedicated walkthrough, see [Broker onboarding and verification](docs/onboarding/README.md), including relay checks, login verification and troubleshooting.
+
 Open **Broker connection** in the dashboard (or **http://127.0.0.1:3100/#broker**) for the interactive setup guide: Angel One account/KYC, Cloudflare HTTPS relay, SmartAPI app and local `.env`, then hosted login and read-only verification. The guide starts collapsed; select its heading to expand or collapse it. Use Back/Next or select a step directly; the selected step and expanded/collapsed state survive dashboard refreshes and page navigation in the current tab. Returning from hosted login opens the verification step. Step 4 includes a **Click here to test Angel One login** action using the same browser-bound login flow as the connection controls; it is enabled only after the server has loaded an API key and HTTPS relay. The guide links to official instructions and detects local configuration without displaying secrets. Navigation is not proof of external setup: you still create accounts, deploy the relay and edit `.env` yourself.
 
 ### 1. Prepare your broker account
