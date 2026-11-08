@@ -101,6 +101,7 @@ test('response diagnostics identify the endpoint and recognised broker code with
     assert.ok(!error.message.includes('private-account'));
     return true;
   });
+
   const unknown = fixture(async () => new Response(JSON.stringify({ status: false, errorcode: 'fixture-token', message: 'fixture-key', data: { account: 'private-account' } })));
   await assert.rejects(unknown.history.request('positions', undefined, metadata), error => {
     assert.match(error.message, /getPosition reported failure/);
@@ -112,4 +113,24 @@ test('response diagnostics identify the endpoint and recognised broker code with
     const auth = fixture(async () => new Response(JSON.stringify({ status: false, errorCode, data: null })));
     await assert.rejects(auth.history.request('search', {}, metadata), { code: 'SMARTAPI_AUTH', status: 401 });
   }
+});
+
+test('one-minute broker downloads support arbitrary NSE tickers and reject wider/older ranges before networking', async () => {
+  const calls = [];
+  const { history } = fixture(async (url, options) => {
+    calls.push({ url, input: JSON.parse(options.body) });
+    return new Response(JSON.stringify({ status: true, data: url.endsWith('searchScrip')
+      ? [{ exchange: 'NSE', tradingsymbol: 'M&M-EQ', symboltoken: '2031' }] : [] }));
+  });
+  const result = await history.download('M&M', ['2026-11-02', '2026-11-06'], { interval: 'ONE_MINUTE' });
+  assert.equal(result.request.interval, 'ONE_MINUTE');
+  assert.equal(result.request.fromdate, '2026-11-02 09:15');
+  assert.equal(result.request.todate, '2026-11-06 15:35');
+  assert.equal(result.instrument.symbol, 'M&M-EQ');
+  for (const days of [['2026-11-01', '2026-11-06'], ['2026-10-30', '2026-11-06'], ['2026-11-09'], [], ['2026-11-06', '2026-11-02'], ['2026-02-30']]) {
+    await assert.rejects(history.download('M&M', days, { interval: 'ONE_MINUTE' }), { code: 'SMARTAPI_RANGE' });
+  }
+  await assert.rejects(history.download('M&M', ['2026-11-02'], { interval: 'FIFTEEN_MINUTE' }), { code: 'SMARTAPI_RANGE' });
+  await assert.rejects(history.download('NSE:INFY', ['2026-11-02'], { interval: 'ONE_MINUTE' }), { code: 'SMARTAPI_INSTRUMENT' });
+  assert.equal(calls.length, 2);
 });

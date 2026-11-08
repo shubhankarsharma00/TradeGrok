@@ -13,6 +13,9 @@ let symbolSearchTimer;
 let symbolSearchRevision = 0;
 let logView = null;
 let logRevision = 0;
+const backtestSelection = { botId: '', symbol: '', days: 7 };
+let backtestBusy = false;
+let backtestLearnMoreOpen = false;
 const noticeStates = new Map();
 let onboardingStep = smartApiResult ? 3 : 0;
 let onboardingOpen = false;
@@ -60,12 +63,18 @@ function collapsibleNotice(id, tone, title, content, alert = false) {
   if (noticeStates.get(id)?.signature !== signature) noticeStates.set(id, { signature, open: tone === 'danger' });
   return `<details class="notice collapsible-notice ${tone}" data-notice-id="${escape(id)}"${noticeStates.get(id).open ? ' open' : ''}><summary>${title}</summary><div class="notice-content"${alert ? ' role="alert"' : ''}>${content}</div></details>`;
 }
+function removableNotice(id, tone, title, content) {
+  const signature = JSON.stringify([tone, title, content]);
+  if (noticeStates.get(id)?.signature !== signature) noticeStates.set(id, { signature, dismissed: false });
+  if (noticeStates.get(id).dismissed) return '';
+  return `<div class="notice removable-notice ${tone}" data-removable-notice="${escape(id)}"><div class="notice-header"><strong id="notice-title-${escape(id)}">${title}</strong><button type="button" class="notice-dismiss" data-dismiss-notice="${escape(id)}" aria-label="Dismiss notice" aria-describedby="notice-title-${escape(id)}">&times;</button></div><div class="notice-content">${content}</div></div>`;
+}
 function banners() {
   return `${state.settings.emergency ? collapsibleNotice('entry-lock', 'danger', 'Entry lock active.', 'All bots paused. Existing paper exit strategies, stops and targets are still monitored; positions were not flattened.') : ''}
     ${state.engine.error ? collapsibleNotice('market-data', 'danger', 'Market data unavailable.', `${escape(state.engine.error)} Last successful cycle: ${date(state.engine.lastTick)}.`) : ''}
     ${state.engine.analysisLog?.error ? collapsibleNotice('analysis-log', 'danger', 'Analysis log incomplete.', escape(state.engine.analysisLog.error), true) : ''}
-    ${(state.engine.marketWindows ?? []).filter(window => window.specialSession).map(window => collapsibleNotice(`market-window:${window.symbol}`, window.open ? 'subtle' : 'warning', `NSE:${escape(window.symbol)} Muhurat paper window ${window.open ? 'open' : 'closed'}.`, `${escape(window.description)} No automatic liquidation at close; existing exit rules remain unchanged.`)).join('')}
-    ${state.metrics.unavailablePositions ? collapsibleNotice('stale-positions', 'warning', 'Some open positions have no saved valid SmartAPI quote.', 'Equity and unrealised P&amp;L are unavailable until prices are received. No fills on stale prices.') : state.metrics.stalePositions ? collapsibleNotice('stale-positions', 'warning', 'Equity and unrealised P&amp;L use last known SmartAPI prices.', `Oldest position quote: ${date(state.metrics.valuationAt)} IST. These are not live values. No fills on stale prices.`) : ''}`;
+    ${(state.engine.marketWindows ?? []).filter(window => window.specialSession).map(window => removableNotice(`market-window:${window.symbol}`, window.open ? 'subtle' : 'warning', `NSE:${escape(window.symbol)} Muhurat paper window ${window.open ? 'open' : 'closed'}.`, `${escape(window.description)} No automatic liquidation at close; existing exit rules remain unchanged.`)).join('')}
+    ${state.metrics.unavailablePositions ? removableNotice('stale-positions', 'warning', 'Some open positions have no saved valid SmartAPI quote.', 'Equity and unrealised P&amp;L are unavailable until prices are received. No fills on stale prices.') : state.metrics.stalePositions ? removableNotice('stale-positions', 'warning', 'Equity and unrealised P&amp;L use last known SmartAPI prices.', `Oldest position quote: ${date(state.metrics.valuationAt)} IST. These are not live values. No fills on stale prices.`) : ''}`;
 }
 function sourcePill() { return '<span class="pill mint">SMARTAPI MARKET DATA</span>'; }
 function exitWindowOpen(symbol) {
@@ -133,12 +142,11 @@ function overview() {
 }
 function botsPage() {
   return `${heading('Rules into action.', 'Configure, start, and monitor your predefined paper strategies.')}
-    <div class="section-heading"><p class="muted">Paused bots without open positions can be moved to the bin.</p><button class="text-button" data-page="bin">Bot bin (${(state.deletedBots ?? []).length})</button></div>
+    ${removableNotice('bot-bin-help', 'subtle', 'Paused bots without open positions can be moved to the bin.', `<button class="text-button" data-page="bin">Bot bin (${(state.deletedBots ?? []).length})</button>`)}
     ${banners()}${collapsibleNotice('paper-data', 'subtle', sourcePill(), 'Every market price comes from Angel One. Paper cash and fills are simulated and kept separate from your actual account.')}
     <div class="bot-grid">${state.bots.map(botCard).join('')}<button class="new-bot-card" data-action="create"><span>+</span><strong>A rule worth testing?</strong><p>Give it a name, a level, and a risk limit.</p><small>Create paper bot ↗</small></button></div>
     ${backtestPanel()}
-    <section class="panel preset-panel"><div class="section-heading"><h2>Entry strategies</h2><span class="pill gray">LONG-ONLY · NSE CASH</span></div><div class="preset-grid">${state.presets.map(preset => `<div><h3>${escape(preset.name)}</h3><p>${escape(preset.description)}</p>${(preset.sources ?? []).map(source => `<p><a href="${escape(source.url)}" target="_blank" rel="noopener noreferrer">${escape(source.name)}</a></p>`).join('')}</div>`).join('')}</div><p class="feed-note">Breakouts use sampled prices; moving averages use polling samples, not exchange candles. No averaging down, leverage, shorts, or derivatives. Swing defaults are illustrative, not a backtested edge.</p></section>
-    <section class="panel preset-panel"><div class="section-heading"><h2>Exit strategies</h2><span class="pill gray">SAME-DAY EXITS ALLOWED</span></div><div class="preset-grid">${state.exitPresets.map(preset => `<div><h3>${escape(preset.name)}</h3><p>${escape(preset.description)}</p></div>`).join('')}</div><p class="feed-note">Choose independently of entry. Stop loss and take profit remain active with eligible fresh quotes; no Muhurat auction/post-close fills. Timers count entry day as session 1, skipping weekends and verified NSE holidays except the verified 8 November 2026 Muhurat session. Other unsupported special sessions/years produce an explicit alert. Missed deadlines use the next eligible fresh quote, not a historical fill. Performance means price gain from entry before fees and exit slippage. Without a timed rule, positions may carry overnight. No broker-side orders; keep the app running.</p></section>`;
+    ${backtestLearnMore()}`;
 }
 function binPage() {
   const bots = state.deletedBots ?? [];
@@ -148,19 +156,56 @@ function binPage() {
     ${bots.length ? `<div class="bot-grid">${bots.map(bot => `<article class="bot-card"><span class="pill gray">In bin</span><h3>${escape(bot.name)}</h3><p class="bot-sub">NSE:${escape(bot.symbol)}</p><p class="bot-message">Removed ${date(bot.deletedAt)} IST</p><div class="bot-actions"><button class="button secondary small" data-action="logs" data-id="${bot.id}" aria-label="View logs for ${escape(bot.name)}">Logs</button><button class="button secondary small" data-page="orders">Order journal</button></div></article>`).join('')}</div>` : '<div class="empty compact"><h2>The bot bin is empty</h2><p>Bots moved to the bin will appear here with their saved logs.</p></div>'}`;
 }
 function backtestPanel() {
-  const run = state.backtest, summary = run?.summary;
-  const matchingBots = state.bots.filter(bot => bot.name.toLowerCase() === 'safe play');
-  const supported = matchingBots.length === 1 && matchingBots[0].preset === 'sma' && matchingBots[0].symbol === 'RELIANCE' && (matchingBots[0].exitPreset ?? 'protective') === 'protective';
-  return `<section class="panel"><h2>safe play historical backtest</h2><p>Last seven completed NSE sessions, real Angel One five-minute candles. Saved SMA 5/12 polling samples interpreted as completed five-minute closes; next-bar-open fills, 0.05% adverse slippage and 0.05% fee per side. No changes or orders in your paper bots.</p>
-    <button class="button primary" data-action="backtest" ${!supported || state.smartapi.status !== 'callback_received' || state.backtestReplaySupported !== true ? 'disabled' : ''}>Download &amp; backtest safe play</button>
-    ${!supported ? '<p class="form-help">Requires exactly one safe play SMA bot on RELIANCE with Stop loss / take profit exits. Custom and timed exits are not supported by this historical replay.</p>' : ''}
-    ${state.backtestReplaySupported !== true ? '<p class="form-help">Restart TradeGrok before a new download/replay to load the corrected session schedule. Today’s saved login can be restored; saved results remain available below.</p>' : ''}
-    <p class="form-help">Downloads require a current Angel One session; today’s saved login survives restarts. RELIANCE requires 72 continuous bars/day (09:15–15:15 IST) plus two prior sessions; continuous gaps or zero volume block results. The 15:15–15:35 closing auction is excluded, not mistaken for missing continuous candles.</p>
-    ${run ? `<p>Latest run: ${escape(run.status)}. Evaluated: ${run.evaluated.map(escape).join(', ')}.</p>
-    ${summary ? `<div class="risk-row"><span>Trades / net P&amp;L</span><strong>${summary.trades} / ${rupees(summary.netPnl)}</strong></div><div class="risk-row"><span>Fees / modelled slippage</span><strong>${rupees(summary.fees)} / ${rupees(summary.slippage)}</strong></div><div class="risk-row"><span>Close-equity max drawdown</span><strong>${rupees(summary.maxDrawdown)} (${summary.maxDrawdownPct}%)</strong></div>` : '<div class="notice danger">Coverage blocked this run. No performance result was fabricated.</div>'}
-    <a href="/api/backtests/latest" download="safe-play-backtest.json">Download complete dataset, trades and assumptions</a>` : ''}
-    ${run && state.backtestReplaySupported === true ? '<button class="button secondary" data-action="backtest-replay">Replay saved candles and original settings</button>' : ''}
-    <p class="form-help">Standalone replay funded by saved initial paper capital, not real account buying power. SMA resets each day; overnight positions carry through the excluded auction, then any remainder is simulated closed at the final continuous close (15:15 IST), not the official auction close. Same-bar conflicts choose the stop. Not a tick-level replay or prediction.</p></section>`;
+  const run = state.backtest;
+  const selected = state.bots.find(bot => bot.id === backtestSelection.botId) ?? state.bots[0];
+  backtestSelection.botId = selected?.id ?? '';
+  if (!backtestSelection.symbol) backtestSelection.symbol = selected?.symbol ?? '';
+  const disabled = backtestBusy || !selected;
+  return `<section class="panel"><h2>Historical backtesting</h2>
+    <div class="form-grid backtest-controls">
+      <label>Bot rules<select id="backtest-bot" ${backtestBusy ? 'disabled' : ''}>${state.bots.map(bot => `<option value="${escape(bot.id)}" ${bot.id === selected?.id ? 'selected' : ''}>${escape(bot.name)} · ${escape(bot.preset)} / ${escape(bot.exitPreset ?? 'protective')}</option>`).join('')}</select></label>
+      <label>NSE ticker<input id="backtest-symbol" value="${escape(backtestSelection.symbol)}" maxlength="40" placeholder="e.g. INFY" autocapitalize="characters" ${backtestBusy ? 'disabled' : ''}></label>
+      <label>Last calendar days<select id="backtest-days" ${backtestBusy ? 'disabled' : ''}>${Array.from({ length: 7 }, (_, index) => index + 1).map(days => `<option value="${days}" ${days === backtestSelection.days ? 'selected' : ''}>${days} day${days === 1 ? '' : 's'}</option>`).join('')}</select></label>
+      <label>Candle interval<input value="1 minute (fixed)" disabled></label>
+    </div>
+    <button class="button primary" data-action="backtest" ${disabled ? 'disabled' : ''}>Run</button>
+    ${!selected ? '<p class="form-help">Create and configure a bot before selecting its rules.</p>' : ''}
+    ${run ? `<div class="backtest-saved"><p class="muted">Saved: ${escape(run.bot?.name)} on ${escape(run.bot?.symbol)} · ${escape(run.status)}.</p><button class="button secondary" data-action="backtest-results" ${backtestBusy ? 'disabled' : ''}>View latest results</button></div>
+    ${run.interval === 'ONE_MINUTE' ? `<button class="button secondary" data-action="backtest-replay" ${backtestBusy || !selected ? 'disabled' : ''}>Run selected bot on saved ticker history</button><button class="button secondary" data-action="backtest-original" ${backtestBusy ? 'disabled' : ''}>Replay original settings</button>` : '<p class="muted">Saved results use five-minute candles.</p>'}` : ''}
+    </section>`;
+}
+function backtestLearnMore() {
+  return `<details id="backtest-learn-more" class="panel backtest-learn-more"${backtestLearnMoreOpen ? ' open' : ''}><summary>Learn more about backtest</summary><div class="backtest-guide">
+    <p class="form-help">Run any configured bot on your choice of NSE cash ticker. Fixed one-minute candles, up to the last seven IST calendar days. Complete local history is reused across bots and overlapping date windows; Angel One downloads only missing sessions.</p>
+    <p class="form-help">Entry/support prices remain the bot’s configured values when changing ticker; review them first. Missing history requires an Angel One login; fully cached runs work offline. Only completed sessions are replayed; weekends and holidays do not add older days. Exact NSE -EQ instruments only; no derivatives or live orders.</p>
+    <p class="form-help">Run selected bot on saved ticker history applies the selected bot's current rules to the saved window. Replay original settings reproduces the saved snapshot. Legacy five-minute results remain available in the popup. Run a new backtest to download one-minute history for generalized replay.</p>
+    <p class="form-help">All entry and exit presets are replayed. Completed closes signal next-bar-open fills; stops/targets use intrabar extremes, stop first on conflicts. 0.05% adverse slippage and 0.05% fee per side. Conservative common window excludes trading after 15:15 IST on CAS-era dates, including valid later non-CAS prints; no auction fills. Missing/zero-volume continuous candles block results. Logs label simulated backtest fills separately from paper transactions.</p>
+    <p class="form-help">Fresh initial paper capital, not real buying power or current positions. Positions may carry overnight; any remainder is simulated closed at the final continuous close. Not a tick-level replay or prediction.</p>
+    <section class="preset-panel"><div class="section-heading"><h2>Entry strategies</h2><span class="pill gray">LONG-ONLY · NSE CASH</span></div><div class="preset-grid">${state.presets.map(preset => `<div><h3>${escape(preset.name)}</h3><p>${escape(preset.description)}</p>${(preset.sources ?? []).map(source => `<p><a href="${escape(source.url)}" target="_blank" rel="noopener noreferrer">${escape(source.name)}</a></p>`).join('')}</div>`).join('')}</div><p class="feed-note">Breakouts use sampled prices; moving averages use polling samples, not exchange candles. No averaging down, leverage, shorts, or derivatives. Swing defaults are illustrative, not a backtested edge.</p></section>
+    <section class="preset-panel"><div class="section-heading"><h2>Exit strategies</h2><span class="pill gray">SAME-DAY EXITS ALLOWED</span></div><div class="preset-grid">${state.exitPresets.map(preset => `<div><h3>${escape(preset.name)}</h3><p>${escape(preset.description)}</p></div>`).join('')}</div><p class="feed-note">Choose independently of entry. Stop loss and take profit remain active with eligible fresh quotes; no Muhurat auction/post-close fills. Timers count entry day as session 1, skipping weekends and verified NSE holidays except the verified 8 November 2026 Muhurat session. Other unsupported special sessions/years produce an explicit alert. Missed deadlines use the next eligible fresh quote, not a historical fill. Performance means price gain from entry before fees and exit slippage. Without a timed rule, positions may carry overnight. No broker-side orders; keep the app running.</p></section>
+    </div></details>`;
+}
+function backtestResults(run) {
+  const summary = run.summary ?? run.result?.summary;
+  const bot = run.bot ?? run.snapshot?.bot;
+  const evaluated = run.evaluated ?? run.sessions?.evaluated ?? [];
+  const interval = run.interval ?? run.dataset?.request?.interval;
+  const cache = run.cache ?? run.dataset?.cache;
+  return `<p class="backtest-result-meta">${escape(bot?.name)} on NSE:${escape(bot?.symbol)} · ${escape(interval)} · ${escape(run.status)}</p>
+    <p class="muted">Saved ${date(run.createdAt)} IST. Evaluated sessions: ${evaluated.map(escape).join(', ')}.</p>
+    ${cache ? `<p class="form-help">History: ${cache.reusedSessions.length} complete sessions reused locally; ${cache.downloadedSessions.length} sessions downloaded from Angel One.</p>` : ''}
+    ${summary ? `<div class="backtest-summary"><div class="risk-row"><span>Trades / net P&amp;L after both fees</span><strong>${summary.trades} / ${rupees(summary.netPnl)}</strong></div><div class="risk-row"><span>Wins / losses / breakeven</span><strong>${summary.wins} / ${summary.losses} / ${summary.breakeven ?? 0}</strong></div><div class="risk-row"><span>Win rate / return</span><strong>${summary.winRatePct == null ? 'N/A' : `${summary.winRatePct}%`} / ${summary.returnPct}%</strong></div><div class="risk-row"><span>Fees / modelled slippage</span><strong>${rupees(summary.fees)} / ${rupees(summary.slippage)}</strong></div><div class="risk-row"><span>Close-equity max drawdown</span><strong>${rupees(summary.maxDrawdown)} (${summary.maxDrawdownPct}%)</strong></div></div>` : run.status === 'downloaded' ? '<p class="form-help">History saved; no simulation has run yet. Download the candles below, or close this popup and select a bot to replay them.</p>' : '<div class="notice danger" role="alert">Coverage blocked this run. No performance result was fabricated.</div>'}
+    ${run.loggingError ? `<div class="notice danger" role="alert">${escape(run.loggingError)}</div>` : ''}
+    <details class="backtest-coverage"><summary>Candle coverage</summary>${(run.coverage ?? []).map(day => `<p>${escape(day.date)}: ${day.received}/${day.expected} continuous bars; ${day.zeroVolume.length} zero-volume bars.</p>`).join('')}</details>
+    <div class="backtest-downloads"><a href="/api/backtests/history" download="one-minute-history.json">Download saved candles</a><a href="/api/backtests/latest" download="bot-backtest.json">Download complete report, trades and decision logs</a></div>
+    <p class="form-help">Historical simulation only; paper bots, cash and positions are unchanged. Net trade P&amp;L includes both fees. Not a prediction or tick-level replay.</p>`;
+}
+function openBacktestResults(run = state.backtest) {
+  if (!run) { toast('No saved backtest results yet.', true); return; }
+  $('#backtest-results-content').innerHTML = backtestResults(run);
+  const dialog = $('#backtest-results-dialog');
+  if (!dialog.open) dialog.showModal();
+  $('#backtest-results-title').focus();
 }
 function brokerOnboarding() {
   const labels = ['Angel One account', 'Cloudflare HTTPS', 'SmartAPI & .env', 'Login & verify'];
@@ -253,6 +298,8 @@ function settingsPage() {
     <div class="notice subtle">Entry lock pauses new entries, not exit monitoring. Limits apply to new entries; lowering limits does not resize or close existing positions. Runs only while the local server is awake.</div></section></div>`;
 }
 function renderPage() {
+  const backtestGuide = $('#backtest-learn-more');
+  if (backtestGuide) backtestLearnMoreOpen = backtestGuide.open;
   const guide = $('#broker-onboarding');
   if (guide) onboardingOpen = guide.open;
   document.querySelectorAll('details[data-notice-id]').forEach(notice => {
@@ -268,6 +315,7 @@ function logsPage() {
   const view = logView;
   if (!view) return '<button class="button secondary" data-page="bots">Back to my bots</button>';
   const decisions = { no_action: 'No action', blocked: 'Blocked', holding: 'Holding', buy: 'Paper buy', sell: 'Paper sell', rolled_back: 'Rolled back', skipped: 'Skipped' };
+  const backtestDecisions = { ...decisions, buy: 'Simulated buy', sell: 'Simulated sell', signal: 'Signal' };
   const today = new Date(Date.parse(state.serverTime) + 19800000).toISOString().slice(0, 10);
   const inBin = (state.deletedBots ?? []).some(bot => bot.id === view.id);
   return `<button class="text-button" data-page="${inBin ? 'bin' : 'bots'}">← Back to ${inBin ? 'bot bin' : 'my bots'}</button>
@@ -279,7 +327,7 @@ function logsPage() {
     ${view.error ? `<div class="notice danger log-status" role="alert">${escape(view.error)} Use Refresh logs to retry.</div>` : ''}
     <p class="log-status muted" role="status">${view.loading ? 'Reading saved analysis records…' : `${view.records.length} records loaded${view.before !== null ? '; older records available' : ''}.`}</p>
     ${!view.loading && !view.error && !view.records.length ? `<div class="empty compact"><h2>${view.before !== null ? 'No matching records in this part of the file' : 'No saved analyses for this date'}</h2><p>${view.before !== null ? 'Load older records to continue searching this bot’s local history.' : 'Logging begins with this update; earlier checks cannot be reconstructed. Keep the server running, then refresh. Paused and blocked bot cycles are recorded too.'}</p></div>` : ''}
-    <div class="analysis-list">${view.records.map(record => `<details class="analysis-entry"><summary><time>${date(record.at)} IST</time><strong>${escape(decisions[record.decision] ?? record.decision)}</strong><span>${record.quote?.available ? `${rupees(record.quote.latestPrice)}${record.quote.fresh ? '' : ' · stale/unusable'}` : 'No latest price'}</span></summary><p>${escape(record.reason)}</p><p class="muted">Bot entry window: ${record.market?.entryWindowOpen ? 'open' : 'closed'} · Fresh quote: ${record.quote?.fresh ? 'yes' : 'no'} · ${record.committed ? 'Paper transaction committed' : 'No committed transaction'}</p><pre tabindex="0" aria-label="Saved analysis JSON">${escape(JSON.stringify(record, null, 2))}</pre></details>`).join('')}</div>
+    <div class="analysis-list">${view.records.map(record => `<details class="analysis-entry"><summary><time>${date(record.at)} IST</time><strong>${record.execution === 'backtest' ? `Backtest · NSE:${escape(record.bot?.symbol)} · ${escape(backtestDecisions[record.decision] ?? record.decision)}` : escape(decisions[record.decision] ?? record.decision)}</strong><span>${record.quote?.available ? `${rupees(record.quote.latestPrice)}${record.quote.fresh ? '' : ' · stale/unusable'}` : 'No latest price'}</span></summary><p>${escape(record.reason)}</p><p class="muted">Bot entry window: ${record.market?.entryWindowOpen ? 'open' : 'closed'} · Fresh quote: ${record.quote?.fresh ? 'yes' : 'no'} · ${record.execution === 'backtest' ? 'Historical simulation only; no paper transaction' : record.committed ? 'Paper transaction committed' : 'No committed transaction'}</p><pre tabindex="0" aria-label="Saved analysis JSON">${escape(JSON.stringify(record, null, 2))}</pre></details>`).join('')}</div>
     ${view.before !== null ? `<button class="button secondary log-status" data-action="logs-older" ${view.loading ? 'disabled' : ''}>Load older records</button>` : ''}
     </section>`;
 }
@@ -396,6 +444,16 @@ document.addEventListener('click', async event => {
   const target = event.target.closest('button');
   if (!target) return;
   if (target.dataset.dismiss !== undefined) return $('#bot-dialog').close();
+  if (target.dataset.dismissNotice !== undefined) {
+    const notice = target.closest('[data-removable-notice]');
+    const saved = noticeStates.get(target.dataset.dismissNotice);
+    if (!notice || !saved) return;
+    saved.dismissed = true;
+    const next = notice.nextElementSibling?.querySelector('button, a, input, select');
+    notice.remove();
+    (next ?? $('#main').querySelector('button, a, input, select'))?.focus();
+    return;
+  }
   if (target.dataset.setupStep !== undefined) {
     const step = Number(target.dataset.setupStep);
     if (!Number.isInteger(step) || step < 0 || step > 3) return;
@@ -410,6 +468,8 @@ document.addEventListener('click', async event => {
     page = target.dataset.page; renderPage(); window.scrollTo({ top: 0, behavior: 'instant' }); return;
   }
   const action = target.dataset.action;
+  if (action === 'backtest-results') return openBacktestResults();
+  if (action === 'backtest-results-close') return $('#backtest-results-dialog').close();
   if (action === 'create') return openBot();
   if (action === 'edit') return openBot(state.bots.find(bot => bot.id === target.dataset.id));
   if (action === 'logs') return openLogs([...state.bots, ...(state.deletedBots ?? [])].find(bot => bot.id === target.dataset.id));
@@ -419,12 +479,25 @@ document.addEventListener('click', async event => {
     $('#broker-config-form')?.reset();
     return refresh();
   }
-  if (action === 'backtest' || action === 'backtest-replay') {
+  if (['backtest', 'backtest-replay', 'backtest-original'].includes(action)) {
+    if (backtestBusy) return;
+    const previousId = state.backtest?.id;
+    let result = null;
+    const input = action === 'backtest-original' ? { reuseLatest: true }
+      : action === 'backtest-replay' ? { botId: backtestSelection.botId, reuseLatest: true }
+      : { ...backtestSelection, symbol: backtestSelection.symbol.trim().toUpperCase() };
+    backtestBusy = true;
     target.disabled = true;
-    target.textContent = 'Downloading real candles...';
-    try { await api('/api/backtest/safe-play', action === 'backtest-replay' ? { reuseLatest: true } : {}); await refresh(); toast('Historical backtest saved. No bot settings or paper orders changed.'); }
-    catch (error) { toast(error.message, true); await refresh(); }
-    finally { target.disabled = false; }
+    target.textContent = 'Processing history...';
+    try { result = await api('/api/backtest', input); await refresh(); toast('Backtest and decision logs saved. Paper portfolio unchanged.'); }
+    catch (error) {
+      toast(error.message, true); await refresh();
+      if (state.backtest?.id && state.backtest.id !== previousId) result = state.backtest;
+    }
+    finally {
+      backtestBusy = false; renderPage();
+      if (result?.id) openBacktestResults(result);
+    }
     return;
   }
   if (action === 'smartapi-login' || action === 'smartapi-disconnect') {
@@ -459,9 +532,20 @@ document.addEventListener('click', async event => {
   finally { target.disabled = false; }
 });
 document.addEventListener('change', event => {
+  if (event.target.id === 'backtest-bot') {
+    backtestSelection.botId = event.target.value;
+    backtestSelection.symbol = state.bots.find(bot => bot.id === event.target.value)?.symbol ?? '';
+    renderPage(); return;
+  }
+  if (event.target.id === 'backtest-days') { backtestSelection.days = Number(event.target.value); return; }
   if (event.target.id !== 'log-date' || !logView || !event.target.value) return;
   logView.date = event.target.value; logView.file = null;
   void loadLogs();
+});
+document.addEventListener('input', event => {
+  if (event.target.id !== 'backtest-symbol') return;
+  event.target.value = event.target.value.toUpperCase();
+  backtestSelection.symbol = event.target.value;
 });
 $('#bot-form').addEventListener('change', event => {
   if (['preset', 'symbol'].includes(event.target.name)) {
@@ -539,6 +623,6 @@ clock(); setInterval(clock, 1000);
 void refresh();
 setInterval(() => {
   // Never replace a form the user is editing or a button with an in-flight action.
-  const editing = page === 'settings' || page === 'logs' || brokerConfigDirty() || $('#bot-dialog').open || document.activeElement?.closest('#main');
+  const editing = page === 'settings' || page === 'logs' || brokerConfigDirty() || $('#bot-dialog').open || $('#backtest-results-dialog')?.open || document.activeElement?.closest('#main');
   void refresh(!editing);
 }, 5000);

@@ -29,6 +29,24 @@ test('valuation quotes persist across database reopen and never regress to older
   finally { store.close(); }
 });
 
+test('overlapping one-minute ticker history survives restart and excludes other tickers, intervals and windows', t => {
+  const dir = mkdtempSync(join(tmpdir(), 'tradegrok-history-'));
+  t.after(() => rmSync(dir, { recursive: true }));
+  const path = join(dir, 'test.sqlite');
+  let store = new Store(path);
+  const saved = { id: 'cached-history', sessions: { from: '2026-06-01', through: '2026-06-07', all: ['2026-06-05'] },
+    dataset: { instrument: { exchange: 'NSE', symbol: 'INFY-EQ', token: '123' }, request: { interval: 'ONE_MINUTE' }, candles: [] } };
+  store.saveBacktest(saved);
+  store.saveBacktest({ ...saved, id: 'other-ticker', dataset: { ...saved.dataset, instrument: { ...saved.dataset.instrument, symbol: 'TCS-EQ' } } });
+  store.saveBacktest({ ...saved, id: 'other-interval', dataset: { ...saved.dataset, request: { interval: 'FIVE_MINUTE' } } });
+  store.saveBacktest({ ...saved, id: 'old-window', sessions: { ...saved.sessions, through: '2026-06-01' } });
+  store.close();
+  store = new Store(path);
+  t.after(() => store.close());
+  assert.deepEqual(store.historyDatasets('INFY', '2026-06-02', '2026-06-08'), [saved]);
+  assert.deepEqual(store.historyDatasets('INFY', '2026-06-08', '2026-06-14'), []);
+});
+
 test('bin membership and associated paper history survive restart', t => {
   const dir = mkdtempSync(join(tmpdir(), 'tradegrok-bin-'));
   t.after(() => rmSync(dir, { recursive: true }));

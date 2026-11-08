@@ -162,5 +162,17 @@ export class Store {
     const row = this.db.prepare('SELECT body FROM backtests ORDER BY rowid DESC LIMIT 1').get();
     return row ? JSON.parse(row.body) : null;
   }
+  historyDatasets(symbol, from, through) {
+    return this.db.prepare(`
+      SELECT id, json_extract(body, '$.dataset') AS dataset, json_extract(body, '$.sessions') AS sessions
+      FROM backtests
+      WHERE json_extract(body, '$.dataset.instrument.exchange') = 'NSE'
+        AND json_extract(body, '$.dataset.instrument.symbol') = ?
+        AND json_extract(body, '$.dataset.request.interval') = 'ONE_MINUTE'
+        AND json_extract(body, '$.sessions.from') <= ?
+        AND json_extract(body, '$.sessions.through') >= ?
+      ORDER BY rowid DESC
+    `).all(`${symbol}-EQ`, through, from).map(row => ({ id: row.id, dataset: JSON.parse(row.dataset), sessions: JSON.parse(row.sessions) }));
+  }
   close() { this.db.close(); }
 }
