@@ -250,6 +250,71 @@ test('paper valuation is unavailable instead of using a fabricated mark when quo
   assert.ok(result.cash > 0);
   assert.ok(result.invested > 0);
 });
+test('stale quotes value positions at the last market price, not entry cost', t => {
+  const { store, engine, evaluate, quote } = fixture(t);
+  const opened = evaluate(1390);
+  engine.quotes.set(opened.symbol, quote(1400));
+  const result = metrics(store, engine.quotes, MONDAY + 61000);
+  const value = number => Math.round((number + Number.EPSILON) * 100) / 100;
+  assert.equal(result.equity, value(store.settings().cash + 1400 * opened.position.qty));
+  assert.equal(result.unrealised, value((1400 - opened.position.entry) * opened.position.qty));
+  assert.equal(result.totalPnl, value(result.equity - store.settings().initialCash));
+  assert.equal(result.stalePositions, 1);
+  assert.equal(result.unavailablePositions, 0);
+  assert.equal(result.valuationAt, quote().at);
+});
+test('saved valuation survives failed cycles and restarts without allowing stale fills or chart observations', async t => {
+  const { store, engine, bot, quote, time } = fixture(t);
+  engine.broker = { status: () => ({ status: 'connected' }), quote: async () => quote(1390) };
+  assert.equal(await engine.tick(), true);
+  assert.equal(store.valuationQuotes().length, 1);
+  const opened = store.bot(bot.id), historyLength = store.equity().length;
+  const closedTime = Date.parse('2026-11-14T10:00:00+05:30');
+  time(closedTime);
+  engine.broker.quote = async () => ({ ...quote(1300), at: new Date(MONDAY).toISOString() });
+  assert.equal(await engine.tick(), true);
+  assert.equal(store.orders().length, 1);
+  assert.equal(store.equity().length, historyLength);
+  const expected = Math.round((store.settings().cash + 1300 * opened.position.qty) * 100) / 100;
+  assert.equal(metrics(store, engine.quotes, closedTime).equity, expected);
+  engine.broker.quote = async () => { throw new Error('Network failed'); };
+  assert.equal(await engine.tick(), false);
+  assert.equal(engine.quotes.size, 0);
+  const restarted = new Engine(store, engine.broker, { now: () => closedTime });
+  assert.equal(restarted.quotes.size, 0);
+  assert.equal(metrics(store, restarted.quotes, closedTime).equity, expected);
+  assert.throws(() => store.transaction(() => restarted.exit(store.bot(bot.id), restarted.quotes.get(bot.symbol), 'Manual')), /fresh/);
+  assert.equal(store.orders().length, 1);
+  time(MONDAY + 86400000);
+  engine.broker.quote = async () => quote(1400);
+  assert.equal(await engine.tick(), true);
+  assert.equal(metrics(store, engine.quotes, MONDAY + 86400000).stalePositions, 0);
+  assert.equal(store.equity().length, historyLength + 1);
+});
+test('valuation rejects invalid quotes and missing marks rather than reporting a partial portfolio', t => {
+  const { store, engine, evaluate, quote } = fixture(t);
+  const opened = evaluate(1390);
+  for (const invalid of [
+    quote(1400, 'unsupported'), quote(0), quote(NaN),
+    { ...quote(), at: 'invalid' }, { ...quote(), at: new Date(MONDAY + 6000).toISOString() },
+    { ...quote(), symbol: 'ITC' }
+  ]) {
+    engine.quotes.set(opened.symbol, invalid);
+    assert.equal(metrics(store, engine.quotes, MONDAY).equity, null);
+  }
+  store.saveValuationQuote(quote(1400));
+  assert.ok(metrics(store, engine.quotes, MONDAY + 61000).equity > 0);
+  engine.quotes.set(opened.symbol, quote(1380));
+  store.saveValuationQuote({ ...quote(1400), at: new Date(MONDAY + 1000).toISOString() });
+  assert.equal(metrics(store, engine.quotes, MONDAY + 61000).unrealised,
+    Math.round((1400 - opened.position.entry) * opened.position.qty * 100) / 100);
+  store.saveBot({ ...opened, id: 'missing-mark', symbol: 'ITC' });
+  const result = metrics(store, engine.quotes, MONDAY + 61000);
+  assert.equal(result.equity, null);
+  assert.equal(result.unrealised, null);
+  assert.equal(result.totalPnl, null);
+  assert.equal(result.unavailablePositions, 1);
+});
 test('overlapping ticks are skipped; emergency pause during fetch wins over old state', async t => {
   const { store, engine, bot, quote } = fixture(t);
   const settings = store.settings(); settings.mode = 'angel'; store.saveSettings(settings);

@@ -83,6 +83,33 @@ test('entry suggestions require a fresh actual SmartAPI price and never use a sy
   listeners.change({ target: { name: 'symbol' } });
   assert.equal(elements.level.value, '');
 });
+test('overview labels stale capital and quote time, distinguishing missing valuations', () => {
+  const { context, run } = fixture();
+  Object.assign(context.snapshot, {
+    bots: [], equity: [], events: [], orders: [], connection: { status: 'connected' },
+    engine: { error: null, lastTick: null },
+    metrics: { equity: 99990.2, totalPnl: -9.8, cash: 80380.75, invested: 19609.45, unrealised: 0,
+      stalePositions: 1, unavailablePositions: 0, valuationAt: '2026-11-06T15:30:00+05:30',
+      dayLoss: 0, openRisk: 0, entriesToday: 0, running: 0, positions: 1 }
+  });
+  Object.assign(context.snapshot.settings, { mode: 'angel', dailyLossLimit: 2000, maxTradeRisk: 500, maxDailyTrades: 10 });
+  const html = run('overview()');
+  assert.match(html, /99,990\.20/);
+  assert.match(html, /Last known prices/);
+  assert.match(html, /Oldest quote 06 Nov/);
+  assert.match(html, /These are not live values/);
+  assert.match(html, /No fills on stale prices/);
+  assert.doesNotMatch(html, /Current equity and unrealised P&amp;L are unavailable/);
+  context.snapshot.metrics.unavailablePositions = 1;
+  context.snapshot.metrics.equity = null;
+  context.snapshot.metrics.totalPnl = null;
+  const missing = run('overview()');
+  assert.match(missing, /no saved valid SmartAPI quote/);
+  assert.doesNotMatch(missing, /Last known prices/);
+  context.snapshot.metrics.stalePositions = 0;
+  context.snapshot.metrics.unavailablePositions = 0;
+  assert.doesNotMatch(run('banners()'), /last known SmartAPI prices/);
+});
 
 test('exit strategies expose only their required fields and do not modify entry rules', () => {
   const { elements, nodes, listeners } = fixture();

@@ -50,6 +50,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS orders (id TEXT PRIMARY KEY, bot_id TEXT NOT NULL REFERENCES bots(id), body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS equity (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS valuation_quotes (symbol TEXT PRIMARY KEY, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS backtests (id TEXT PRIMARY KEY, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS retired_data (kind TEXT NOT NULL, id TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(kind,id));
     `);
@@ -150,6 +151,12 @@ export class Store {
     this.db.exec('DELETE FROM equity WHERE id NOT IN (SELECT id FROM equity ORDER BY id DESC LIMIT 240)');
   }
   equity() { return this.db.prepare('SELECT body FROM equity ORDER BY id').all().map(row => JSON.parse(row.body)); }
+  valuationQuotes() { return this.db.prepare('SELECT body FROM valuation_quotes').all().map(row => JSON.parse(row.body)); }
+  saveValuationQuote(quote) {
+    const previous = this.db.prepare('SELECT body FROM valuation_quotes WHERE symbol=?').get(quote.symbol);
+    if (previous && Date.parse(JSON.parse(previous.body).at) > Date.parse(quote.at)) return;
+    this.db.prepare('INSERT OR REPLACE INTO valuation_quotes VALUES (?, ?)').run(quote.symbol, JSON.stringify(quote));
+  }
   saveBacktest(run) { this.db.prepare('INSERT INTO backtests VALUES (?, ?)').run(run.id, JSON.stringify(run)); }
   latestBacktest() {
     const row = this.db.prepare('SELECT body FROM backtests ORDER BY rowid DESC LIMIT 1').get();
