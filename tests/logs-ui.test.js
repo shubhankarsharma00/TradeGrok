@@ -6,6 +6,9 @@ import { presets, exitPresets, instruments } from '../server/store.js';
 
 function fixture() {
   const listeners = {}, requests = [];
+  const navItems = ['overview', 'bots', 'backtest', 'orders', 'broker', 'settings'].map(page => ({
+    dataset: { page }, classList: { toggle(_name, active) { this.active = active; } }
+  }));
   const nodes = {
     '#main': { innerHTML: '' }, '#page-label': {}, '#clock': {}, '#bot-dialog': { open: false },
     '#backtest-results-dialog': { open: false, showModal() { this.open = true; }, close() { this.open = false; } },
@@ -14,7 +17,7 @@ function fixture() {
   };
   const context = createContext({
     document: {
-      querySelector: selector => nodes[selector], querySelectorAll: () => [],
+      querySelector: selector => nodes[selector], querySelectorAll: selector => selector === '.nav-item' ? navItems : [],
       addEventListener: (event, callback) => { (listeners[event] ??= []).push(callback); }
     },
     location: { search: '' }, window: { scrollTo() {} }, URLSearchParams,
@@ -30,7 +33,7 @@ function fixture() {
     requests[index].resolve({ ok: !error, json: async () => error ? { error } : { records, before, file: 'data/logs/analysis-2026-11-09.jsonl' } });
     await new Promise(resolve => setImmediate(resolve));
   };
-  return { context, nodes, listeners, requests, run, reply };
+  return { context, nodes, listeners, requests, run, reply, navItems };
 }
 const row = (decision = 'blocked') => ({ at: '2026-11-09T04:30:00Z', decision, reason: 'No price <script>unsafe</script>', committed: false, market: { entryWindowOpen: false }, quote: { available: false, fresh: false }, checks: {} });
 
@@ -57,7 +60,7 @@ test('bots page embeds the bin after the active list with working logs and no re
   const html = f.nodes['#main'].innerHTML;
   assert.equal(f.nodes['#page-label'].textContent, 'My bots');
   assert.ok(html.indexOf('Second bot') < html.indexOf('id="bot-bin"'));
-  assert.ok(html.indexOf('id="bot-bin"') < html.indexOf('Historical backtesting'));
+  assert.doesNotMatch(html, /Historical backtesting|id="backtest-bot"|Learn more about backtest/);
   assert.doesNotMatch(html, /data-page="bin"/);
   assert.match(html, /Removed &lt;script&gt;bot&lt;\/script&gt;/);
   assert.match(html, /data-action="logs"/);
@@ -84,6 +87,31 @@ test('bots page shows an empty bin below the list when there are no removed bots
   assert.match(html, /The bot bin is empty/);
   assert.ok(html.indexOf('Second bot') < html.indexOf('id="bot-bin"'));
   assert.doesNotMatch(html, /data-page="bin"/);
+});
+test('Backtest navigation opens its own page and preserves setup when returning from My bots', async () => {
+  const f = fixture();
+  const navigate = page => f.listeners.click[0]({ target: { closest: () => ({ dataset: { page } }) } });
+  await navigate('backtest');
+  assert.equal(f.nodes['#page-label'].textContent, 'Backtest');
+  assert.deepEqual(f.navItems.filter(item => item.classList.active).map(item => item.dataset.page), ['backtest']);
+  assert.match(f.nodes['#main'].innerHTML, /<h1>Backtest<\/h1>/);
+  assert.match(f.nodes['#main'].innerHTML, /Historical backtesting/);
+  assert.match(f.nodes['#main'].innerHTML, /id="backtest-learn-more"/);
+  assert.doesNotMatch(f.nodes['#main'].innerHTML, /id="bot-bin"|data-action="create"/);
+  f.run("backtestSelection.botId = 'second'; backtestSelection.symbol = 'TCS'; backtestSelection.days = 3");
+  await navigate('bots');
+  assert.equal(f.nodes['#page-label'].textContent, 'My bots');
+  assert.deepEqual(f.navItems.filter(item => item.classList.active).map(item => item.dataset.page), ['bots']);
+  assert.match(f.nodes['#main'].innerHTML, /id="bot-bin"/);
+  assert.doesNotMatch(f.nodes['#main'].innerHTML, /id="backtest-bot"/);
+  await navigate('backtest');
+  assert.match(f.nodes['#main'].innerHTML, /value="second" selected/);
+  assert.match(f.nodes['#main'].innerHTML, /value="TCS"/);
+  assert.match(f.nodes['#main'].innerHTML, /<option value="3" selected>/);
+  f.context.snapshot.bots = [];
+  f.run('renderPage()');
+  assert.match(f.nodes['#main'].innerHTML, /data-action="backtest" disabled/);
+  assert.match(f.nodes['#main'].innerHTML, /Create and configure a bot before selecting its rules/);
 });
 test('moving a bot to the bin requires confirmation and sends the protected mutation', async () => {
   const f = fixture();
@@ -211,7 +239,7 @@ test('backtest guidance and strategy descriptions are collapsed at the end and r
   const f = fixture();
   const panel = f.run('backtestPanel()');
   assert.doesNotMatch(panel, /Complete local history|Entry\/support prices|All entry and exit|Fresh initial/);
-  f.run("page = 'bots'; renderPage()");
+  f.run("page = 'backtest'; renderPage()");
   const html = f.nodes['#main'].innerHTML;
   assert.match(html, /<details id="backtest-learn-more" class="panel backtest-learn-more"><summary>Learn more about backtest/);
   assert.ok(html.endsWith('</details>'));
@@ -220,7 +248,7 @@ test('backtest guidance and strategy descriptions are collapsed at the end and r
   assert.ok(html.indexOf('Exit strategies') > html.indexOf('Learn more about backtest'));
   assert.match(html, /Missing\/zero-volume continuous candles block results/);
   f.nodes['#backtest-learn-more'] = { open: true };
-  f.run('renderPage()');
+  f.run("page = 'bots'; renderPage(); page = 'backtest'; renderPage()");
   assert.match(f.nodes['#main'].innerHTML, /class="panel backtest-learn-more" open/);
   f.nodes['#backtest-learn-more'].open = false;
   f.run('renderPage()');
@@ -248,7 +276,7 @@ test('backtest controls send selected rules and normalized ticker, with offline 
     if (mutation) requests.push({ path, input: JSON.parse(options.body), headers: options.headers });
     return { ok: true, json: async () => mutation ? {} : f.context.snapshot };
   };
-  f.run("backtestPanel(); backtestSelection.symbol = 'm&m'; backtestSelection.days = 3; page = 'bots'; refreshing = null");
+  f.run("backtestPanel(); backtestSelection.symbol = 'm&m'; backtestSelection.days = 3; page = 'backtest'; refreshing = null");
   for (const action of ['backtest', 'backtest-replay', 'backtest-original']) {
     await f.listeners.click[0]({ target: { closest: () => ({ dataset: { action } }) } });
   }
@@ -268,7 +296,7 @@ test('new backtests open the popup using the actual response even if state refre
       snapshot: { bot: { name: 'New run', symbol: 'ITC' } }, dataset: { request: { interval: 'ONE_MINUTE' } },
       sessions: { evaluated: ['2026-11-06'] }, result: status === 'completed' ? { summary: { trades: 0, netPnl: 0, wins: 0, losses: 0, breakeven: 0, winRatePct: null, returnPct: 0, fees: 0, slippage: 0, maxDrawdown: 0, maxDrawdownPct: 0 } } : null, coverage: [] };
     f.context.fetch = async (path, options) => ({ ok: options?.method === 'POST', json: async () => options?.method === 'POST' ? run : { error: 'State refresh failed.' } });
-    f.run("backtestPanel(); page = 'bots'; refreshing = null");
+    f.run("backtestPanel(); page = 'backtest'; refreshing = null");
     await f.listeners.click[0]({ target: { closest: () => ({ dataset: { action: 'backtest' } }) } });
     assert.equal(f.nodes['#backtest-results-dialog'].open, true);
     assert.match(f.nodes['#backtest-results-content'].innerHTML, /New run on NSE:ITC/);
@@ -304,7 +332,7 @@ test('persisted coverage/logging failures open the report, while unsaved failure
       };
       return { ok: false, json: async () => ({ error: 'Request failed.' }) };
     };
-    f.run("backtestPanel(); page = 'bots'; refreshing = null");
+    f.run("backtestPanel(); page = 'backtest'; refreshing = null");
     await f.listeners.click[0]({ target: { closest: () => ({ dataset: { action: 'backtest' } }) } });
     assert.equal(f.nodes['#backtest-results-dialog'].open, scenario !== 'unsaved');
     const html = f.nodes['#backtest-results-content'].innerHTML;

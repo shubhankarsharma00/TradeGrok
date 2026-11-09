@@ -20,7 +20,7 @@ const noticeStates = new Map();
 let onboardingStep = smartApiResult ? 3 : 0;
 let onboardingOpen = false;
 let brokerConfigSaved = false;
-const pages = { overview: 'Overview', bots: 'My bots', orders: 'Order journal', broker: 'Broker connection', settings: 'Risk & settings', logs: 'Bot logs' };
+const pages = { overview: 'Overview', bots: 'My bots', backtest: 'Backtest', orders: 'Order journal', broker: 'Broker connection', settings: 'Risk & settings', logs: 'Bot logs' };
 
 async function api(path, input) {
   const response = await fetch(path, input === undefined ? { cache: 'no-store' } : {
@@ -145,9 +145,11 @@ function botsPage() {
     ${removableNotice('bot-bin-help', 'subtle', 'Paused bots without open positions can be moved to the bin below.', `<button class="text-button" data-page="bots" data-section="bot-bin">Bot bin (${(state.deletedBots ?? []).length})</button>`)}
     ${banners()}${collapsibleNotice('paper-data', 'subtle', sourcePill(), 'Every market price comes from Angel One. Paper cash and fills are simulated and kept separate from your actual account.')}
     <div class="bot-grid">${state.bots.map(botCard).join('')}<button class="new-bot-card" data-action="create"><span>+</span><strong>A rule worth testing?</strong><p>Give it a name, a level, and a risk limit.</p><small>Create paper bot ↗</small></button></div>
-    ${botBinSection()}
-    ${backtestPanel()}
-    ${backtestLearnMore()}`;
+    ${botBinSection()}`;
+}
+function backtestPage() {
+  return `${heading('Backtest', 'Replay your bot rules on historical NSE candles without changing your paper portfolio.', false)}
+    ${banners()}${backtestPanel()}${backtestLearnMore()}`;
 }
 function botBinSection() {
   const bots = state.deletedBots ?? [];
@@ -309,7 +311,7 @@ function renderPage() {
   });
   $('#page-label').textContent = pages[page];
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.page === page));
-  $('#main').innerHTML = page === 'logs' ? logsPage() : page === 'overview' ? overview() : page === 'bots' ? botsPage() : page === 'broker' ? brokerPage() : page === 'settings' ? settingsPage() :
+  $('#main').innerHTML = page === 'logs' ? logsPage() : page === 'overview' ? overview() : page === 'bots' ? botsPage() : page === 'backtest' ? backtestPage() : page === 'broker' ? brokerPage() : page === 'settings' ? settingsPage() :
     `${heading('Every fill, accounted for.', 'An immutable journal of simulated entries and exits. Prices and fees in INR.', false)}${banners()}<div class="notice subtle">Every row is a paper fill, never an Angel One order. Net exit P&amp;L excludes entry fees; total portfolio P&amp;L includes both sides. Feed labels remain attached to historical fills.</div><section class="panel">${ordersTable()}</section>`;
 }
 function logsPage() {

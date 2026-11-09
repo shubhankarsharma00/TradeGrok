@@ -58,7 +58,8 @@ test('requested trade notices have dismissal buttons instead of collapsible disc
   assert.match(f.run('botsPage()'), /data-removable-notice="bot-bin-help"/);
   assert.match(f.run('botsPage()'), /Bot bin \(0\)/);
   const index = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.match(index, /data-page="bots" data-section="bot-bin" class="nav-item"/);
+  assert.match(index, /data-page="backtest" class="nav-item"/);
+  assert.doesNotMatch(index, /data-section="bot-bin" class="nav-item"/);
 });
 
 test('missing saved quotes keep their distinct unavailable notice removable', () => {
