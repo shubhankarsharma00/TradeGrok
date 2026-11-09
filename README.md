@@ -26,6 +26,8 @@ Dashboard notices have expandable details: select a headline to expand or collap
 
 Broker connection keeps login, verification, status and the callback URL visible. Setup instructions, session details and paper-execution information are collapsed by default; verification failures stay expanded.
 
+Use **Dark mode** in the top bar to switch between light and dark themes. The interface follows your system appearance until you choose a theme, then remembers that choice in this browser across visits and tabs. The theme also applies during the local broker-login handoff. If browser storage is unavailable, a notice explains that your choice lasts only for the current page.
+
 The interface is vanilla JavaScript and CSS, with locally hosted Silkscreen headings. The server uses Node's built-in HTTP and SQLite modules: **no third-party runtime dependencies, frontend build or Python SDK required.**
 
 ## Quick start

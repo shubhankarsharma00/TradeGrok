@@ -23,7 +23,7 @@ test('dashboard serves private state but never environment/database files', asyn
   assert.equal(initial.connection.status, 'not_configured');
   assert.equal(initial.account, null);
   assert.equal(initial.orders.length, 0);
-  for (const path of ['/', '/app.js', '/styles.css', '/favicon.svg']) {
+  for (const path of ['/', '/app.js', '/theme.js', '/styles.css', '/favicon.svg']) {
     const response = await fetch(`${base}${path}`); assert.equal(response.status, 200);
     assert.ok(response.headers.get('content-security-policy').includes("frame-ancestors 'none'"));
   }

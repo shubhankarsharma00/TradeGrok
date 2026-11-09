@@ -13,6 +13,7 @@ import { executionWindow } from './market-calendar.js';
 
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
 const assets = new Map([['/', ['index.html', 'text/html']], ['/app.js', ['app.js', 'text/javascript']], ['/styles.css', ['styles.css', 'text/css']], ['/favicon.svg', ['favicon.svg', 'image/svg+xml']]]);
+assets.set('/theme.js', ['theme.js', 'text/javascript']);
 assets.set('/fonts/Silkscreen-Regular.ttf', ['fonts/Silkscreen-Regular.ttf', 'font/ttf']);
 assets.set('/fonts/OFL.txt', ['fonts/OFL.txt', 'text/plain']);
 assets.set('/auth/smartapi/return', ['smartapi-return.html', 'text/html']);
