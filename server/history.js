@@ -1,7 +1,8 @@
 import { networkInterfaces } from 'node:os';
 import { isIP } from 'node:net';
 import { AppError } from './broker.js';
-import { sessionSchedule } from './backtest.js';
+import { sessionSchedule, prepareCandles } from './backtest.js';
+import { isNseSymbol } from './store.js';
 
 const endpoints = {
   search: '/rest/secure/angelbroking/order/v1/searchScrip',
@@ -104,7 +105,17 @@ export class SmartHistory {
       return emptyPortfolio ? [] : payload.data;
     }
   }
-  async download(symbol, days) {
+  async download(symbol, days, { interval = 'FIVE_MINUTE', schedules } = {}) {
+    if (!isNseSymbol(symbol)) throw new AppError('Choose a valid NSE cash ticker.', 400, 'SMARTAPI_INSTRUMENT');
+    if (!['FIVE_MINUTE', 'ONE_MINUTE'].includes(interval) || !Array.isArray(days) || !days.length ||
+        days.some((day, index) => typeof day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day) ||
+          !Number.isFinite(Date.parse(`${day}T00:00:00Z`)) || new Date(`${day}T00:00:00Z`).toISOString().slice(0, 10) !== day ||
+          (index > 0 && day <= days[index - 1]))) throw new AppError('Invalid historical interval or dates.', 400, 'SMARTAPI_RANGE');
+    const span = (Date.parse(`${days.at(-1)}T00:00:00Z`) - Date.parse(`${days[0]}T00:00:00Z`)) / 86400000;
+    if (interval === 'ONE_MINUTE' && (span > 6 || days[0] < istHistoryDay(this.now() - 6 * 86400000) || days.at(-1) > istHistoryDay(this.now()))) {
+      throw new AppError('One-minute history is limited to the last seven IST calendar days.', 400, 'SMARTAPI_RANGE');
+    }
+    if (span > 99) throw new AppError('Five-minute history request exceeds the 100-day broker limit.', 400, 'SMARTAPI_RANGE');
     this.smartapi.expire();
     if (!this.smartapi.session) throw new AppError('Sign in with Angel One again in Broker connection before downloading history.', 401, 'SMARTAPI_AUTH');
     const metadata = await this.clientMetadata();
@@ -113,14 +124,67 @@ export class SmartHistory {
     if (matches.length !== 1) throw new AppError('Angel One did not resolve one exact NSE cash-equity instrument. Backtest blocked.', 502, 'SMARTAPI_INSTRUMENT');
     const instrument = { exchange: 'NSE', symbol: matches[0].tradingsymbol, token: String(matches[0].symboltoken) };
     const request = {
-      exchange: instrument.exchange, symboltoken: instrument.token, interval: 'FIVE_MINUTE',
-      fromdate: `${days[0]} 09:15`, todate: `${days.at(-1)} ${sessionSchedule(days.at(-1)).sessionClose}`
+      exchange: instrument.exchange, symboltoken: instrument.token, interval,
+      fromdate: `${days[0]} ${schedules?.[days[0]]?.open ?? '09:15'}`, todate: `${days.at(-1)} ${schedules?.[days.at(-1)]?.sessionClose ?? sessionSchedule(days.at(-1)).sessionClose}`
     };
-    if ((Date.parse(`${days.at(-1)}T00:00:00Z`) - Date.parse(`${days[0]}T00:00:00Z`)) / 86400000 > 99) {
-      throw new AppError('Five-minute history request exceeds the 100-day broker limit.', 400, 'SMARTAPI_RANGE');
-    }
     const data = await this.request('candles', request, metadata);
     this.smartapi.session.historicalVerifiedAt = new Date(this.now()).toISOString();
     return { instrument, request, data, fetchedAt: new Date(this.now()).toISOString(), source: 'Angel One SmartAPI getCandleData' };
   }
 }
+
+  function istHistoryDay(now) { return new Date(now + 19800000).toISOString().slice(0, 10); }
+
+  export async function downloadHistory(history, store, symbol, sessions) {
+    const requested = new Set(sessions.all), byDay = new Map(), cachedSources = [];
+    let instrument = null, fetchedAt = null;
+    for (const saved of store.historyDatasets(symbol, sessions.from, sessions.through)) {
+      if (!saved.sessions.all.some(day => requested.has(day) && !byDay.has(day))) continue;
+      const rows = saved.dataset.candles.map(bar => [bar.at, bar.open, bar.high, bar.low, bar.close, bar.volume]);
+      const prepared = prepareCandles(rows, saved.sessions);
+      if (saved.sessions.intervalMinutes !== 1 || prepared.sha256 !== saved.dataset.sha256) {
+        throw new AppError('Cached one-minute history checksum failed. Fetch fresh history using the downloadOnly API before retrying. No backtest was computed.', 422, 'BACKTEST_CANDLES');
+      }
+      if (prepared.unexpectedSessions.length) throw new AppError('Cached history contains unexpected trading sessions. No cached data was reused.', 422, 'BACKTEST_COVERAGE');
+      const completeDays = prepared.coverage.filter(day => day.complete && requested.has(day.date) && !byDay.has(day.date)).map(day => day.date);
+      if (!completeDays.length) continue;
+      if (instrument && instrument.token !== saved.dataset.instrument.token) throw new AppError('Cached instrument tokens conflict. History cannot be safely combined.', 422, 'BACKTEST_INSTRUMENT');
+      instrument = saved.dataset.instrument;
+      fetchedAt ??= saved.dataset.fetchedAt;
+      for (const day of completeDays) byDay.set(day, prepared.candles.filter(bar => bar.at.startsWith(day)).map(bar => [bar.at, bar.open, bar.high, bar.low, bar.close, bar.volume]));
+      cachedSources.push({ id: saved.id, sha256: prepared.sha256, fetchedAt: saved.dataset.fetchedAt, sessions: completeDays });
+      if (byDay.size === requested.size) break;
+    }
+    const reusedSessions = sessions.all.filter(day => byDay.has(day));
+    const missing = sessions.all.filter(day => !byDay.has(day));
+    const groups = [];
+    for (const day of missing) {
+      const last = groups.at(-1);
+      if (last && sessions.all.indexOf(day) === sessions.all.indexOf(last.at(-1)) + 1) last.push(day);
+      else groups.push([day]);
+    }
+    const downloads = [], downloadedRows = [];
+    for (const days of groups) {
+      const download = await history.download(symbol, days, { interval: 'ONE_MINUTE', schedules: sessions.schedules });
+      if (download.request?.interval !== 'ONE_MINUTE' || download.instrument?.exchange !== 'NSE' ||
+          download.instrument.symbol !== `${symbol}-EQ` || (instrument && instrument.token !== download.instrument.token)) {
+        throw new AppError('Downloaded history does not match the cached NSE one-minute instrument. Data was not combined.', 422, 'BACKTEST_INSTRUMENT');
+      }
+      // Validate each actual response against its own range before combining it with local days.
+      const window = { ...sessions, all: days, evaluated: days };
+      prepareCandles(download.data, window);
+      downloadedRows.push(...download.data);
+      instrument = download.instrument;
+      fetchedAt = download.fetchedAt;
+      downloads.push({ request: download.request, fetchedAt: download.fetchedAt, sessions: days, source: download.source });
+    }
+    const fromdate = `${sessions.all[0]} ${sessions.schedules[sessions.all[0]].open}`;
+    const todate = `${sessions.all.at(-1)} ${sessions.schedules[sessions.all.at(-1)].sessionClose}`;
+    const from = Date.parse(fromdate.replace(' ', 'T') + ':00+05:30'), through = Date.parse(todate.replace(' ', 'T') + ':00+05:30');
+    return {
+      instrument, fetchedAt, source: reusedSessions.length ? 'Angel One SmartAPI getCandleData (local session cache)' : downloads[0].source,
+      request: { exchange: instrument.exchange, symboltoken: instrument.token, interval: 'ONE_MINUTE', fromdate, todate },
+      data: [...reusedSessions.flatMap(day => byDay.get(day)), ...downloadedRows].filter(row => Date.parse(row[0]) >= from && Date.parse(row[0]) <= through),
+      cache: { reusedSessions, downloadedSessions: missing, cachedSources, downloads }
+    };
+  }
