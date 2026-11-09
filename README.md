@@ -22,7 +22,7 @@ A local-first trading desk for Indian markets. Connect Angel One SmartAPI, view 
 | Order journal and analysis | Inspect simulated fills and per-cycle decision records, including blocked conditions. |
 | Historical replay | Any configured bot and chosen NSE cash ticker, using your Angel One account's one-minute candles from the last 1–7 calendar days; saved history, decision logs, net P/L and win/loss report. |
 
-The bot-bin hint, Muhurat-window notices and stale/unavailable valuation notices have an **×** dismissal button. Removing one hides it across automatic refreshes and navigation in the current tab; changed content or a page reload shows it again. The bot bin stays accessible from the sidebar. Other dashboard notices have expandable details: select a headline to expand or collapse it. Routine notices start collapsed; critical errors and the entry lock start expanded. Expansion choices survive automatic refreshes and page changes; changed content resets to its default.
+The bot-bin hint, Muhurat-window notices and stale/unavailable valuation notices have an **×** dismissal button. Removing one hides it across automatic refreshes and navigation in the current tab; changed content or a page reload shows it again. The bot bin stays accessible below the active bot list in **My bots**; the sidebar has a dedicated **Backtest** tab instead of a separate bin shortcut. Other dashboard notices have expandable details: select a headline to expand or collapse it. Routine notices start collapsed; critical errors and the entry lock start expanded. Expansion choices survive automatic refreshes and page changes; changed content resets to its default.
 
 Broker connection keeps login, verification, status and the callback URL visible. Setup instructions, session details and paper-execution information are collapsed by default; verification failures stay expanded.
 
@@ -30,13 +30,13 @@ The interface is vanilla JavaScript and CSS, with locally hosted Silkscreen head
 
 ### Download history and backtest
 
-In **My bots → Historical backtesting**, choose a configured bot, an NSE cash ticker (uppercase, without `NSE:` or `-EQ`), and **1–7 calendar days**. Candles are fixed at **one minute**. The current IST date counts toward the limit; incomplete sessions, weekends and holidays are excluded, never replaced by older sessions. Downloads use your current Angel One SmartAPI login and resolve exactly one `NSE` / `-EQ` instrument; no synthetic data, derivatives or broker orders.
+In **Backtest → Historical backtesting**, choose a configured bot, an NSE cash ticker (uppercase, without `NSE:` or `-EQ`), and **1–7 calendar days**. Candles are fixed at **one minute**. The current IST date counts toward the limit; incomplete sessions, weekends and holidays are excluded, never replaced by older sessions. Downloads use your current Angel One SmartAPI login and resolve exactly one `NSE` / `-EQ` instrument; no synthetic data, derivatives or broker orders.
 
 Use **Run** to fetch and replay together. Complete, checksum-verified one-minute sessions already saved for that ticker are reused automatically, even from another bot's run or a different date window; only missing sessions are downloaded. For example, Monday's last-seven-calendar-day window shares six calendar dates with Sunday's window: common completed trading sessions are reused and only new completed sessions are fetched. Weekends and holidays have no candles to download. Fully cached windows work without a current login. The popup reports reused/downloaded session counts and offers **Download saved candles** as JSON. **Run selected bot on saved ticker history** uses the exact saved window with the selected bot's current settings; **Replay original settings** reproduces the saved snapshot. Entry/support price levels are not automatically rescaled for a different ticker.
 
 The legacy `/api/backtest` request with `downloadOnly: true` still fetches fresh history without replaying; it can replace a corrupted cache window after signing in. There is no separate history-only button in the UI.
 
-Backtest guidance, assumptions and entry/exit strategy descriptions are grouped under **Learn more about backtest** at the end of **My bots**, collapsed by default. Its open/closed state survives page refresh polling and navigation within the current page load. Setup controls and operational alerts remain visible.
+Backtest guidance, assumptions and entry/exit strategy descriptions are grouped under **Learn more about backtest** at the end of **Backtest**, collapsed by default. Its open/closed state survives page refresh polling and navigation within the current page load. Setup controls and operational alerts remain visible.
 
 All four entry presets and all six exit presets are supported. Completed one-minute closes replace polling samples; signals fill at the next same-session continuous open. Stops/targets use actual open gaps and intrabar extremes, with stop first if both touch. Timed and performance rules use simulated entry time and trading-session counts. Sizing uses saved risk limits and fresh initial simulated capital, not current paper cash or real buying power. One entry per bot per IST day; positions may carry overnight and any remainder is liquidated at the final continuous close.
 
@@ -288,7 +288,7 @@ Actual broker holdings never become paper capital or positions. Journal exit P&L
 
 ### Historical backtest
 
-The **My bots** backtest panel requires exactly one bot named **`safe play`** using **RELIANCE**, SMA entry and protective stop/target exits. It downloads seven completed NSE sessions plus two warm-up sessions of actual five-minute candles. A current login is required for download.
+The **Backtest** panel requires exactly one bot named **`safe play`** using **RELIANCE**, SMA entry and protective stop/target exits. It downloads seven completed NSE sessions plus two warm-up sessions of actual five-minute candles. A current login is required for download.
 
 This replay uses next-bar-open fills, the same modelled fee/slippage, conservative same-bar stop/target conflicts and strict continuous-session coverage. RELIANCE requires 72 continuous bars/day; the closing auction is excluded. Missing/zero-volume/unsupported sessions block performance results, rather than substituting older days. Saved datasets can be downloaded and replayed with their original configuration/hash without altering your paper bots. It is not a generic multi-symbol backtester, tick replay or prediction.
 
