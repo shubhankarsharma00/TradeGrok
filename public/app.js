@@ -5,7 +5,7 @@ const integer = value => new Intl.NumberFormat('en-IN', { maximumFractionDigits:
 const date = value => value ? new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(value)) : 'Not checked yet';
 let state;
 const smartApiResult = new URLSearchParams(location.search).get('smartapi');
-let page = smartApiResult || location.hash === '#broker' ? 'broker' : 'overview';
+let page = smartApiResult || location.hash === '#broker' ? 'broker' : location.hash === '#backtest' ? 'backtest' : 'overview';
 if (smartApiResult) history.replaceState(null, '', '/');
 let refreshing = null;
 let toastTimer;
@@ -149,6 +149,7 @@ function botsPage() {
 }
 function backtestPage() {
   return `${heading('Backtest', 'Replay your bot rules on historical NSE candles without changing your paper portfolio.', false)}
+    <p><a class="button primary" href="/backtest/">Open nested custom-rule backtester</a></p>
     ${banners()}${backtestPanel()}${backtestLearnMore()}`;
 }
 function botBinSection() {

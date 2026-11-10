@@ -44,6 +44,29 @@ test('same-origin mutation token, Host and cross-site read protections', async t
   assert.equal((await fetch(`${base}/api/state`, { headers: { 'Sec-Fetch-Site': 'cross-site' } })).status, 403);
   assert.equal((await fetch(base, { headers: { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate' } })).status, 200);
 });
+test('local backtester serves the shared demo editor and worker through an explicit asset allowlist', async t => {
+  const { base } = await fixture(t);
+  const redirect = await fetch(`${base}/backtest`, { redirect: 'manual' });
+  assert.equal(redirect.status, 308);
+  assert.equal(redirect.headers.get('location'), '/backtest/');
+  const html = await (await fetch(`${base}/backtest/`)).text();
+  assert.match(html, /Local backtester/);
+  assert.match(html, /href="\/#backtest"/);
+  assert.match(html, /id="rule-join-dialog"/);
+  assert.match(html, /src="\.\/demo\/app.js"/);
+  for (const asset of ['demo/app.js', 'demo/data.js', 'demo/engine.js', 'demo/defaults.js', 'demo/worker.js', 'demo/storage.js', 'demo/analytics.js', 'demo/config.js', 'demo/runtime.js', 'shared/signals.js', 'demo/demo.css', 'theme.js', 'styles.css', 'favicon.svg', 'rulebook.html']) {
+    const response = await fetch(`${base}/backtest/${asset}`);
+    assert.equal(response.status, 200, asset);
+    assert.ok(response.headers.get('content-security-policy').includes("frame-ancestors 'none'"));
+  }
+  const runtime = await (await fetch(`${base}/backtest/demo/runtime.js`)).text();
+  assert.match(runtime, /\/api\/backtests\/history/);
+  assert.match(runtime, /downloadOnly: true/);
+  assert.deepEqual(await (await fetch(`${base}/backtest/demo/bundles/manifest.json`)).json(), { version: 1, datasets: [] });
+  for (const path of ['server/app.js', 'demo/bundles/RELIANCE.csv', '.env', 'data/tradegrok.sqlite']) {
+    assert.equal((await fetch(`${base}/backtest/${path}`)).status, 404);
+  }
+});
 test('create/configure/start/pause/manual close and emergency release end to end', async t => {
   const now = () => Date.parse('2026-11-09T10:00:00+05:30');
   const broker = { status: () => ({ status: 'connected' }), account: null, quote: async symbol => ({ symbol, price: 500, source: 'angel', at: new Date(now()).toISOString() }) };

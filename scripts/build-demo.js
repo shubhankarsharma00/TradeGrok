@@ -11,7 +11,7 @@ if (measurementId && process.env.DEMO_GA_DEPLOYMENT_REVIEWED !== 'yes') throw ne
 await rm(output, { recursive: true, force: true });
 await mkdir(resolve(output, 'demo'), { recursive: true });
 for (const name of ['index.html', 'rulebook.html']) await cp(resolve(root, 'demo', name), resolve(output, name));
-for (const name of ['app.js', 'data.js', 'defaults.js', 'engine.js', 'worker.js', 'storage.js', 'analytics.js', 'demo.css']) await cp(resolve(root, 'demo', name), resolve(output, 'demo', name));
+for (const name of ['app.js', 'data.js', 'defaults.js', 'engine.js', 'worker.js', 'storage.js', 'analytics.js', 'runtime.js', 'demo.css']) await cp(resolve(root, 'demo', name), resolve(output, 'demo', name));
 await writeFile(resolve(output, 'demo/config.js'), `export const analyticsConfig = ${JSON.stringify({ enabled: Boolean(measurementId), measurementId })};\n`);
 await mkdir(resolve(output, 'shared'), { recursive: true });
 await cp(resolve(root, 'shared/signals.js'), resolve(output, 'shared/signals.js'));

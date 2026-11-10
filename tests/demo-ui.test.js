@@ -21,7 +21,7 @@ function fixture() {
   };
   const sample = { id: 'fixture', symbol: 'TEST-FIXTURE', from: '2026-08-03', through: '2026-08-04', bars: [[1785728700000, 100, 101, 99, 100, 1000]] };
   const context = createContext({
-    ...data, ...engine, ...defaults, crypto, structuredClone, URL, File, AbortController,
+    ...data, ...engine, ...defaults, crypto, structuredClone, URL, File, AbortController, localBacktest: null,
     document: { querySelector: selector => nodes[selector] },
     sample
   });

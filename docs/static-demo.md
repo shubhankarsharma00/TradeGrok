@@ -3,7 +3,10 @@
 The public demo is HTML/CSS/JavaScript, worker scripts and permitted CSV assets.
 All strategy rules, backtests, portfolio replay, imports, charts and exports run in
 the browser. No TradeGrok API, serverless function, database service or broker login
-is deployed. The existing Node application remains separate and unchanged in use.
+is deployed. The local Node app serves the same editor and simulation engine at
+`/backtest/`, with an optional Angel One history bridge. That bridge is not shipped
+in the public build: `demo/runtime.js` disables local integration in static hosting.
+Local research strategies remain separate from running paper bots.
 
 ## Build and preview
 
