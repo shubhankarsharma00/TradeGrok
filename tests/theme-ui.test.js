@@ -120,3 +120,15 @@ test('broker handoff applies appearance without requiring dashboard controls', (
     assert.ok(html.indexOf('<script src="/theme.js"></script>') < html.indexOf('<link rel="stylesheet"'));
   }
 });
+
+test('dark form backgrounds preserve the backtest dropdown arrow geometry', () => {
+  const css = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
+  const formRule = css.match(/:root\[data-theme="dark"\] :is\(input,select\)\s*\{([^}]+)\}/)?.[1];
+  assert.ok(formRule);
+  assert.match(formRule, /background-color:\s*#1c1a24/);
+  assert.doesNotMatch(formRule, /(?:^|;)\s*background\s*:/);
+  const selectRule = css.match(/(?:^|})\s*\.backtest-controls select\s*\{([^}]+)\}/)?.[1];
+  assert.match(selectRule, /background-repeat:\s*no-repeat/);
+  assert.match(selectRule, /background-position:\s*right 12px center/);
+  assert.match(selectRule, /background-size:\s*12px 12px/);
+});
