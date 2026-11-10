@@ -14,6 +14,7 @@ data/
 .relay-build/
 tradegrok-relay.zip
 node_modules/
+dist-demo/
 .wrangler/
 .dev.vars
 .dev.vars.*

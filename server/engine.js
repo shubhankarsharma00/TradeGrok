@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { AppError } from './broker.js';
 import { isNseSymbol, presets, exitPresets } from './store.js';
 import { holdingSession, tradingSession, executionWindow } from './market-calendar.js';
+import { money, signal, exitSignal, average } from '../shared/signals.js';
+export { money, signal, exitSignal } from '../shared/signals.js';
 
-export const money = number => Math.round((number + Number.EPSILON) * 100) / 100;
 export function istDay(now) { return new Date(now + 19800000).toISOString().slice(0, 10); }
 export function entryWindow(now, symbol) { return executionWindow(now, symbol).open; }
 export function validQuote(quote, mode, now) {
@@ -59,19 +60,6 @@ export function validateRisk(input, previous) {
     maxPosition: money(number(input.maxPosition, 'Position cap', 100, previous.initialCash)),
     maxDailyTrades: number(input.maxDailyTrades, 'Daily entry limit', 1, 50, true)
   };
-}
-const average = values => values.reduce((a, b) => a + b, 0) / values.length;
-export function signal(bot, price) {
-  if (bot.preset === 'dip') return price <= bot.level;
-  if (bot.preset === 'breakout' || bot.preset === 'swing') return bot.previous !== null && bot.previous <= bot.level && price > bot.level;
-  if (bot.samples.length < 13) return false;
-  const prev = bot.samples.slice(0, -1);
-  return average(prev.slice(-5)) <= average(prev.slice(-12)) && average(bot.samples.slice(-5)) > average(bot.samples.slice(-12));
-}
-export function exitSignal(bot, price) {
-  if (bot.exitPreset === 'support') return price <= bot.exitLevel;
-  if (bot.exitPreset === 'sma' && (bot.exitSamples ?? []).length >= 12) return average(bot.exitSamples.slice(-5)) < average(bot.exitSamples.slice(-12));
-  return false;
 }
 export function timedExitSignal(bot, quote, now, details = {}) {
   details.sessionsRequired = bot.exitSessions;

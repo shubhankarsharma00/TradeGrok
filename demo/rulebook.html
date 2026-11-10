@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#ede9de">
+  <meta name="description" content="The TradeGrok demo rulebook: exact entry and exit presets, stock-aware defaults, and a step-by-step guide to nested custom rules.">
+  <title>Strategy rulebook | TradeGrok</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <script src="./theme.js"></script>
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./demo/demo.css">
+</head>
+<body class="demo rulebook">
+  <a class="skip-link" href="#main">Skip to rulebook</a>
+  <header class="demo-header">
+    <a class="brand" href="./"><img src="./favicon.svg" alt="" width="36" height="36"><span>TradeGrok<span class="brand-dot">.</span></span></a>
+    <div class="demo-header-actions"><button id="theme-toggle" class="button secondary small" type="button" aria-pressed="false" hidden>Dark mode</button><a class="button secondary small" href="./">Open backtester</a></div>
+  </header>
+  <p id="theme-status" class="theme-status" role="status" hidden></p>
+  <main id="main" tabindex="-1">
+    <div class="demo-intro">
+      <h1>Strategy rulebook.</h1>
+      <p>What each preset actually does, which inputs it uses, and how to build your own rules. This describes the static demo's historical simulator, not live order execution.</p>
+    </div>
+    <nav class="rulebook-toc" aria-label="Rulebook sections">
+      <a href="#entry-presets">Entry presets</a><a href="#exit-presets">Exit presets</a><a href="#inputs">Inputs &amp; defaults</a><a href="#custom-rules">Custom rules</a><a href="#execution">Execution &amp; limits</a>
+    </nav>
+
+    <section id="entry-presets" aria-labelledby="entry-heading">
+      <h2 id="entry-heading">Entry presets</h2>
+      <p>Signals use completed one-minute candles. An entry can fill only at the next consecutive candle's open in the same session, subject to capital and risk limits. There is at most one entry per strategy per IST day.</p>
+      <article id="entry-breakout">
+        <h3>Price breakout</h3>
+        <p><strong>Trigger:</strong> the previous eligible close was at or below your entry level, and the current close is strictly above it. Set an <strong>Entry level (INR)</strong>.</p>
+        <p>For a level of INR 100, a move from 99 to 101 qualifies; a move from 101 to 102 does not. This needs a crossing, not merely a price already above the level. The previous-close reference resets each session.</p>
+      </article>
+      <article id="entry-dip">
+        <h3>Buy the dip</h3>
+        <p><strong>Trigger:</strong> the completed close is at or below your <strong>Entry level (INR)</strong>. No crossover, rebound, RSI check or trend filter is required. A falling stock can qualify; use custom rules if you want confirmation.</p>
+      </article>
+      <article id="entry-sma">
+        <h3>Moving-average cross</h3>
+        <p><strong>Trigger:</strong> the fixed 5-sample simple moving average crosses above the fixed 12-sample simple moving average. Previously the 5-sample average was at or below the 12-sample average; now it is strictly above.</p>
+        <p>No price-level input is needed. It requires 13 eligible closes to compare the previous and current averages. Entry samples reset each session and are collected only while flat and eligible to look for an entry. Use custom SMA rules for different periods.</p>
+      </article>
+      <article id="entry-swing">
+        <h3>Swing breakout</h3>
+        <p><strong>Trigger:</strong> the same fixed-level upward crossing as Price breakout. Set an <strong>Entry level (INR)</strong>. The target must be at least twice the stop distance: <strong>2R</strong>.</p>
+        <p>The distinction is its wider suggested stop, longer lookback for the suggested level and longer default holding period for timed exits. It does not detect chart patterns, trail a stop or automatically recalculate the breakout level each day.</p>
+      </article>
+      <article id="entry-rules">
+        <h3>Custom rules</h3>
+        <p><strong>Trigger:</strong> your entry rule tree evaluates to true at a completed candle. Choose <strong>Strategy &rarr; Custom rules</strong> to reveal the editor. Start with the <a href="#custom-rules">custom-rule guide</a> below.</p>
+      </article>
+    </section>
+
+    <section id="exit-presets" aria-labelledby="exit-heading">
+      <h2 id="exit-heading">Exit presets</h2>
+      <p>Choose an exit under <strong>Strategy options &rarr; Exit strategy</strong>. Protective stop loss and take profit remain active with <em>every</em> exit, including custom rules. Ordinary exit signals use the next consecutive same-session open; protective stops and targets can execute within the candle.</p>
+      <article id="exit-protective">
+        <h3>Stop loss / take profit</h3>
+        <p>No additional exit rule. The stop is the filled entry price minus <strong>Stop (%)</strong>; the target is that entry price plus <strong>Target (%)</strong>, rounded to paise. There is no automatic daily close with this preset. Batch runs still liquidate positions at the end of the selected range.</p>
+      </article>
+      <article id="exit-sma">
+        <h3>Moving-average reversal</h3>
+        <p><strong>Trigger:</strong> the 5-sample simple moving average is strictly below the 12-sample average. Unlike the entry preset, this does <strong>not</strong> require a fresh crossing.</p>
+        <p>The exit buffer starts with the filled entry's candle open, then collects completed closes while holding, retaining up to 12 samples. It needs 12 samples before comparing averages and can continue across sessions. No extra input is required.</p>
+      </article>
+      <article id="exit-support">
+        <h3>Support breakdown</h3>
+        <p><strong>Trigger:</strong> the completed close is at or below <strong>Exit support level (INR)</strong>. This is a fixed price, not automatically detected or trailing support. The protective stop can exit first.</p>
+      </article>
+      <article id="exit-max-hold">
+        <h3>Maximum holding period</h3>
+        <p>Exit at your <strong>Exit time (IST)</strong> on <strong>Exit on session</strong>. The entry session counts as session 1; weekends and exchange holidays do not count as holding sessions.</p>
+        <p>The starter setting is session 3, or session 5 for Swing breakout, at 15:00 IST. This demo currently uses the <strong>same deadline logic as Scheduled exit</strong>; the preset names do not imply different execution algorithms.</p>
+      </article>
+      <article id="exit-scheduled">
+        <h3>Scheduled exit</h3>
+        <p>Exit at the selected time on the selected holding session. The starter setting is <strong>session 1 at 15:00 IST</strong>, making it the default same-day deadline option.</p>
+        <p>The deadline is checked when a candle completes: the 14:59 candle completes at 15:00, allowing an exit at the 15:00 open if that next candle exists. If entry occurs after the deadline, the position is checked at its next completed candle. A signal without a next same-session candle cannot fill immediately.</p>
+      </article>
+      <article id="exit-time-performance">
+        <h3>Time + performance</h3>
+        <p>At the selected session/time deadline, compare the completed close with the filled entry price. Exit if the percentage gain is <strong>below Minimum gain (%)</strong>. This comparison is price gain before fees, not net P/L.</p>
+        <p>Meeting or exceeding the threshold passes this check <strong>once for that position</strong>. It is not checked again if the price later falls back. Stop loss, take profit and end-of-range batch liquidation still apply.</p>
+      </article>
+      <article id="exit-rules">
+        <h3>Custom exit rules</h3>
+        <p>Exit when your exit rule tree becomes true while holding. New exit rules start with <code>Close crosses below SMA(20)</code>. You can use different periods or combine checks; they do not disable protective exits.</p>
+      </article>
+    </section>
+
+    <section id="inputs" aria-labelledby="inputs-heading">
+      <h2 id="inputs-heading">Inputs &amp; stock-aware defaults</h2>
+      <p>Starter values are editable heuristics, not optimized parameters or a prediction of returns. The note beneath the dataset selector identifies their price basis. Fixed entry/support levels stay fixed throughout a run.</p>
+      <dl>
+        <dt>Entry and support prices</dt>
+        <dd>Levels accept INR 1-1,000,000. With prior complete sessions, breakout uses the previous session high plus a buffer; dip uses the prior close minus half the estimated daily range; swing uses the highest high across up to 20 earlier observed sessions, retaining only complete sessions. The buffer is 0.1% of the reference price, with a minimum of INR 0.01.</dd>
+        <dt>Stop, target and R</dt>
+        <dd>Stop: 0.2-10%. Target: 0.2-30%. One R is the initial entry-to-stop distance before costs; a 1% stop and 2% target is 2R. Targets must be at least 1R, or 2R for Swing breakout. Suggested stops use the average daily true range from up to 14 earlier complete sessions as a percentage of the reference price, multiplied by 1.5 for swing, rounded up to 0.1% and bounded by the allowed range. Suggested targets start at 2R.</dd>
+        <dt>No earlier history</dt>
+        <dd>The first selected session's opening price is the fallback reference, with a labelled 1% baseline distance. Breakout starts 0.5% above it, dip 1% below and swing 1% above. Future highs, lows, closes and returns are not used to choose these defaults. Choosing a later start date can make earlier candles available for the estimates.</dd>
+        <dt>Support default</dt>
+        <dd>Uses the previous session low when it lies between the planned entry and protective stop. Otherwise it starts 75% of the stop distance below the planned entry. This makes the suggested support closer than the stop, rather than redundant below it.</dd>
+        <dt>Position budget</dt>
+        <dd>A cash allocation, not an instruction to spend the entire account. Defaults start near 10% of capital, adjusted to estimated whole shares and bounded by position/per-trade risk limits; one share may require a larger allocation. Minimum input is INR 100, capped by capital and the position limit. Actual fill prices and shared risk can reduce the quantity or block entry.</dd>
+        <dt>Timed exits</dt>
+        <dd>Holding sessions: whole numbers from 1 to 60. Time: 09:15-15:14 IST. Minimum gain: 0-30%, initially 1R for Time + performance. Suggested time is 15:00, bounded before a known short session's close.</dd>
+      </dl>
+      <p>Suggestions follow stock, preset and date changes. Manual edits and active settings from saved strategies are retained. <strong>Use suggested inputs</strong> resets preset fields for the current selection without destroying custom rules.</p>
+    </section>
+
+    <section id="custom-rules" aria-labelledby="custom-heading">
+      <h2 id="custom-heading">Custom rules</h2>
+      <p>A <strong>condition</strong> compares two values. A <strong>group</strong> combines conditions or smaller groups. AND means every child must match; OR means at least one child must match. Parentheses and outlined group boundaries show which checks belong together.</p>
+      <h3>Available values</h3>
+      <dl>
+        <dt>Open, High, Low, Close</dt><dd>The current completed candle's prices in INR.</dd>
+        <dt>Volume</dt><dd>The current one-minute candle's volume, not the day's cumulative volume.</dd>
+        <dt>SMA and EMA</dt><dd>Moving averages of closes, with a period of 1-500 candles. New inputs start at 20. SMA is the simple average; EMA uses a weight of <code>2 / (period + 1)</code>, seeded from the first period's simple average.</dd>
+        <dt>RSI</dt><dd>Wilder-smoothed RSI of closes, on a 0-100 scale. The default period is 14; the initial calculation needs 14 price changes, or 15 candles. Starter fixed thresholds are 30 for entry and 70 for exit.</dd>
+        <dt>Time (IST)</dt><dd>The candle's start-minute timestamp in Indian Standard Time, evaluated only after that candle completes. Compare it with a <strong>Fixed value</strong> to get a time picker. It is not your computer's current clock.</dd>
+        <dt>Fixed value</dt><dd>A numeric threshold in the other operand's units: INR for prices, shares for volume, an RSI level, or an IST time. New price thresholds use the selected stock; volume suggestions use 1.5 times the baseline for above, or 0.5 times for below. The baseline is the prior complete session's average minute volume, or the first completed candle when no prior session exists.</dd>
+      </dl>
+      <p>Compare like units: for example, RSI with a fixed RSI level, not a rupee price. Custom indicators warm up from the selected simulation history and continue across sessions; they do not use future candles. A comparison involving an unwarmed indicator is false. Crosses also need a previous valid value.</p>
+      <h3>Comparison operators</h3>
+      <dl>
+        <dt>Is above / Is below</dt><dd>Strictly <code>A &gt; B</code> / <code>A &lt; B</code> now. Equality does not match. These can remain true for several candles.</dd>
+        <dt>Crosses above</dt><dd>Previously <code>A &lt;= B</code>, now <code>A &gt; B</code>. Both operands can change, such as two moving averages.</dd>
+        <dt>Crosses below</dt><dd>Previously <code>A &gt;= B</code>, now <code>A &lt; B</code>.</dd>
+      </dl>
+      <p>Built-in dip/support presets include equality; custom <strong>Is below</strong> does not. There are no separate equality, NOT or script-execution operators.</p>
+      <h3 id="nested-example">Build a nested entry rule</h3>
+      <p>This is an editing example, not a recommended trade. The volume threshold is illustrative; replace it with a suitable value for your dataset.</p>
+      <pre><code>Close &gt; SMA(20)
+AND
+(
+  RSI(14) crosses above 30
+  OR
+  Volume &gt; 50000
+)</code></pre>
+      <ol>
+        <li>Select a stock, then <strong>Strategy &rarr; Custom rules</strong>.</li>
+        <li>On the first condition, set <strong>When: Close</strong>, <strong>Condition: Is above</strong>, <strong>Compare with: SMA</strong>, <strong>Period: 20</strong>.</li>
+        <li>At the outer <strong>Add to this group</strong> row, click <strong>Add nested group</strong>. Choose <strong>AND</strong> in the overlay.</li>
+        <li>Inside that new group, change its first condition to <strong>RSI</strong>, period <strong>14</strong>, <strong>Crosses above</strong>, <strong>Fixed value: 30</strong>.</li>
+        <li>Use <strong>Add condition inside the nested group</strong>, not the outer group. Choose <strong>OR</strong> in the overlay. Set the new condition to <strong>Volume</strong>, <strong>Is above</strong>, <strong>Fixed value: 50000</strong>.</li>
+        <li>Check <strong>Rule reads as</strong>: <code>Close &gt; SMA(20) AND (RSI(14) crosses above 30 OR Volume &gt; 50000)</code>. The parentheses are essential: the price check must match, plus either check inside the group.</li>
+        <li>Set your budget, stop and target, then run the backtest. Inspect the trade log and replay, not just the headline return.</li>
+      </ol>
+      <p>Each addition asks <strong>AND or OR</strong>. If a group already contains <code>A AND B</code> and you add C using OR, the editor preserves the earlier relationship as <code>(A AND B) OR C</code>. To get <code>A AND (B OR C)</code>, build the inner group explicitly as above. Cancel or Escape adds nothing.</p>
+      <h3>Custom exits and limits</h3>
+      <p>Choose <strong>Strategy options &rarr; Exit strategy &rarr; Custom exit rules</strong> for an independent exit tree. For example, combine <code>Close crosses below SMA(20)</code> with <code>RSI(14) &gt; 70</code> using OR. Entry and exit trees do not automatically mirror each other.</p>
+      <p>The editor allows a maximum tree depth of 5 and 64 total nodes, counting groups and conditions. Indicator periods must be whole numbers from 1 to 500; numeric constants must be finite and between 0 and 1,000,000,000,000. Use the live expression preview to check nesting before saving.</p>
+    </section>
+
+    <section id="execution" aria-labelledby="execution-heading">
+      <h2 id="execution-heading">Execution &amp; limits</h2>
+      <ul>
+        <li><strong>Historical, long-only, whole shares.</strong> No shorts, options, real orders or live monitoring. Multiple saved strategies in a portfolio share cash and risk limits.</li>
+        <li><strong>A signal is not a guaranteed fill.</strong> Entries use the next actual consecutive same-session open, with a 15:20 IST entry cutoff and the dataset's earlier session close taking precedence. Insufficient budget, cash, risk allowance or a daily limit can block them. An entry does not carry forward to tomorrow.</li>
+        <li><strong>Protection has priority.</strong> Stops/targets use the candle's open and extremes. Gaps fill from the open, not a guaranteed stop price. When both levels are touched within one candle without an opening gap deciding the exit, stop loss wins because minute bars cannot reveal the ordering.</li>
+        <li><strong>Costs are modeled.</strong> Each side includes 0.05% adverse slippage and a 0.05% fee. These are not a full brokerage/tax schedule. A modeled stop risk is not a guarantee of maximum loss.</li>
+        <li><strong>End of range is not end of every day.</strong> A batch backtest liquidates remaining positions at the last continuous-session close. Interactive replay does not automatically liquidate at its end. Select a timed exit if you want a holding deadline.</li>
+        <li><strong>Data quality matters.</strong> Missing or zero-volume required candles block affected ranges; unsupported calendars require explicit acceptance. Corporate actions are not repaired automatically. No values are fabricated to make a strategy run.</li>
+      </ul>
+      <p>These are the demo's current rules, not a claim that the strategy will be profitable. Historical results are not forecasts. <a href="./">Return to the backtester</a>.</p>
+    </section>
+  </main>
+  <footer class="main-footer"><span>TradeGrok demo rulebook &middot; No live orders &middot; Not financial advice</span><a href="#main">Back to top</a></footer>
+</body>
+</html>

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#ede9de">
+  <title>TradeGrok | Try the local trading desk</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <script src="./theme.js"></script>
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./demo/demo.css">
+  <script type="module" src="./demo/app.js"></script>
+</head>
+<body class="demo">
+  <a class="skip-link" href="#main">Skip to backtester</a>
+  <header class="demo-header">
+    <a class="brand" href="./"><img src="./favicon.svg" alt="" width="36" height="36"><span>TradeGrok<span class="brand-dot">.</span></span></a>
+    <div class="demo-header-actions"><span class="demo-label">Historical demo</span><button id="theme-toggle" class="button secondary small" type="button" aria-pressed="false" hidden>Dark mode</button><a class="button secondary small" href="./rulebook.html" target="_blank" rel="noopener noreferrer">Rulebook<span class="sr-only"> (opens in a new tab)</span></a><a class="button secondary small" href="https://github.com/shubhankarsharma00/TradeGrok/blob/main/README.md" target="_blank" rel="noopener noreferrer">Run locally ↗</a></div>
+  </header>
+  <p id="theme-status" class="theme-status" role="status" hidden></p>
+  <div id="storage-status" class="notice warning" role="status" hidden></div>
+  <main id="main" tabindex="-1"></main>
+  <footer class="main-footer"><span>NSE equities · No live orders · Not financial advice</span><button class="text-button" data-action="privacy">Privacy & assumptions</button></footer>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <dialog id="tools-dialog" aria-labelledby="tools-title"><div class="dialog-heading"><h2 id="tools-title"></h2><button class="icon-button" data-dismiss aria-label="Close panel">&times;</button></div><div id="tools-content"></div></dialog>
+  <dialog id="bot-dialog" aria-labelledby="bot-title">
+    <form id="bot-form">
+      <div class="dialog-heading"><h2 id="bot-title">Configure strategy</h2><button class="icon-button" type="button" data-dismiss aria-label="Close strategy editor">&times;</button></div>
+      <input type="hidden" name="id">
+      <label>Name<input name="name" maxlength="60" required value="My strategy"></label>
+      <label>Dataset<select name="datasetId" required></select></label>
+      <div class="form-grid"><label>Entry strategy<select name="preset"></select></label><label data-entry-level>Entry level (INR)<input name="level" type="number" step=".01" min="1" max="1000000" placeholder="Choose a stock first"></label></div>
+      <p data-defaults-note class="form-help" role="status" aria-live="polite"></p><button type="button" class="text-button" data-action="suggest-inputs" data-id="bot-form" hidden>Use suggested inputs</button>
+      <div id="entry-rule-editor"></div>
+      <div class="form-grid"><label>Budget (INR)<input name="budget" type="number" min="100" step=".01" value="10000" required></label><label>Exit strategy<select name="exitPreset"></select></label></div>
+      <div class="form-grid"><label>Stop (%)<input name="stopPct" type="number" min=".2" max="10" step=".1" value="1" required></label><label>Target (%)<input name="targetPct" type="number" min=".2" max="30" step=".1" value="2" required></label></div>
+      <label data-exit-field="support">Exit support level<input name="exitLevel" type="number" min="1" max="1000000" step=".01" placeholder="Choose a stock first"></label>
+      <div data-exit-field="timed" class="form-grid"><label>Exit on session<input name="exitSessions" type="number" min="1" max="60" value="3"></label><label>Exit time (IST)<input name="exitTime" type="time" min="09:15" max="15:14" value="15:00"></label></div>
+      <label data-exit-field="performance">Minimum gain (%)<input name="exitMinGainPct" type="number" min="0" max="30" step=".1" value="1"></label>
+      <div id="exit-rule-editor"></div>
+      <p class="form-help">Long-only, whole shares, one entry per strategy per day. Stop and target remain active with custom exits. <a href="./rulebook.html#custom-rules" target="_blank" rel="noopener noreferrer">Custom-rule guide<span class="sr-only"> (opens in a new tab)</span></a></p>
+      <p id="bot-error" class="form-error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" class="button secondary" data-dismiss>Cancel</button><button class="button primary" type="submit">Save strategy</button></div>
+    </form>
+  </dialog>
+  <dialog id="rule-join-dialog" aria-labelledby="rule-join-title" aria-describedby="rule-join-description">
+    <div class="dialog-heading"><h2 id="rule-join-title">AND or OR?</h2><button class="icon-button" type="button" data-dismiss aria-label="Cancel adding a rule">&times;</button></div>
+    <p id="rule-join-description"></p>
+    <div class="rule-join-context"><span>Current checks in this group</span><p id="rule-join-current"></p></div>
+    <div class="rule-join-choices">
+      <button type="button" class="rule-join-choice" data-action="rule-join" data-id="and"><strong>AND</strong><span>Both the current checks and the new item must match.</span></button>
+      <button type="button" class="rule-join-choice" data-action="rule-join" data-id="or"><strong>OR</strong><span>Either the current checks or the new item can match.</span></button>
+    </div>
+    <p class="form-help">Existing checks keep their logic. We'll group them when needed.</p>
+    <p id="rule-join-error" class="form-error" role="alert" tabindex="-1"></p>
+    <div class="dialog-actions"><button type="button" class="button secondary" data-dismiss>Cancel</button></div>
+  </dialog>
+</body>
+</html>
