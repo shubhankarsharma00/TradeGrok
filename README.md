@@ -250,7 +250,7 @@ sequenceDiagram
     Broker-->>Relay: Callback with state and auth/feed tokens
     Relay-->>Browser: Redirect to fixed loopback return with URL fragment
     Browser->>Local: Same-origin token handoff
-    Local->>Local: Validate state/cookie; save private daily session
+    Local->>Local: Validate state/cookie and save private daily session
     Browser->>Local: Verify read-only connection
     Local->>Broker: Request holdings and positions
 ```
