@@ -95,7 +95,7 @@ dialog { background:var(--surface); color:var(--ink); border:1px solid var(--bor
 :root[data-theme="dark"] .side.sell { background:#442a2b; color:#ffb7ab; }
 :root[data-theme="dark"] code { background:#37333f; color:#d1c8ff; }
 :root[data-theme="dark"] .setup-code code { background:none; }
-:root[data-theme="dark"] :is(input,select) { background:#1c1a24; border-color:#827690; }
+:root[data-theme="dark"] :is(input,select) { background-color:#1c1a24; border-color:#827690; }
 :root[data-theme="dark"] input::placeholder { color:var(--muted); }
 :root[data-theme="dark"] dialog::backdrop { background:#09080db3; }
 #theme-toggle[aria-pressed="true"] { background:var(--mint); border-color:var(--green); color:var(--green); }
