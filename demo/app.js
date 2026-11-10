@@ -4,6 +4,7 @@ import { stockDefaults, ruleConstant } from './defaults.js';
 import { storageAction, saveDataset, removeDataset, saveReport, removeReport, reportMetadata } from './storage.js';
 import { track } from './analytics.js';
 import { analyticsConfig } from './config.js';
+import { localBacktest } from './runtime.js';
 
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -24,6 +25,8 @@ let pendingRuleAddition = null;
 const bundleRequests = new Map(), suggestions = new WeakMap(), automaticRuleValues = new WeakSet();
 const defaultInputs = ['name', 'level', 'budget', 'stopPct', 'targetPct', 'exitLevel', 'exitSessions', 'exitTime', 'exitMinGainPct'];
 let cancellation = 0;
+let localHistoryState = null;
+let savedWorkspaceLoaded = false;
 let replaySpeed = 1;
 function toast(message, error = false) {
   $('#toast').textContent = message; $('#toast').hidden = false; $('#toast').classList.toggle('error', error);
@@ -140,7 +143,8 @@ function runControls() {
   return `<form id="replay-form"><p class="muted">Enabled saved strategies share cash and risk limits.</p><div class="form-grid"><label>From (IST)<input name="from" type="date" required></label><label>Through (IST)<input name="through" type="date" required></label></div><label class="check"><input name="unverified" type="checkbox">Accept observed sessions for unsupported calendars; missing whole sessions cannot be verified.</label><div class="actions"><button class="button primary" ${busy ? 'disabled' : ''}>Start portfolio replay</button></div></form>`;
 }
 function backtestPage() {
-  return `<div class="demo-intro"><h1>Try your trading rules.</h1><p>A hands-on preview of TradeGrok's local trading desk. Backtest a strategy, then replay its trades.</p></div>
+  return `<div class="demo-intro"><h1>Try your trading rules.</h1><p>${localBacktest ? 'Backtest presets or nested custom rules on local candles, then replay the trades. Research strategies never change your paper bots.' : "A hands-on preview of TradeGrok's local trading desk. Backtest a strategy, then replay its trades."}</p></div>
+    ${localBacktest ? localHistoryControls() : ''}
     <form id="quick-form">
       <fieldset id="quick-inputs"><legend class="sr-only">Backtest setup</legend>
       <div class="setup-grid"><div><label for="quick-dataset">Stock / dataset</label><select id="quick-dataset" name="datasetId" required aria-describedby="data-note"></select><button type="button" class="text-button upload-link" data-action="datasets">Upload CSV</button></div>
@@ -168,7 +172,45 @@ function backtestPage() {
     </form>
     <section id="results" class="results" aria-labelledby="results-title" hidden></section>
     <details id="saved-runs" hidden><summary id="saved-runs-label">Previous runs</summary><div id="saved-runs-content"></div></details>
-    <aside class="local-note" aria-label="Full local app"><p><strong>The full desk runs locally.</strong> Connect Angel One for market data and read-only holdings, run paper bots, and track their positions. Neither version places broker orders.</p><a href="https://github.com/shubhankarsharma00/TradeGrok#quick-start" target="_blank" rel="noopener noreferrer">Local setup guide ↗</a></aside>`;
+    ${localBacktest ? '<aside class="local-note"><p>Strategies, reports and imported candles are saved in this browser. Research capital and risk limits are separate from the paper runner.</p><a href="/">Return to local desk</a></aside>' : '<aside class="local-note" aria-label="Full local app"><p><strong>The full desk runs locally.</strong> Connect Angel One for market data and read-only holdings, run paper bots, and track their positions. Neither version places broker orders.</p><a href="https://github.com/shubhankarsharma00/TradeGrok#quick-start" target="_blank" rel="noopener noreferrer">Local setup guide ↗</a></aside>'}`;
+}
+function localHistoryControls() {
+  return `<details id="local-history-panel" open><summary>Angel One history</summary><form id="local-history-form">
+    <p class="form-help">Download one-minute candles using your local broker connection, reuse saved history offline, or upload CSV below. The bot selects a download snapshot only; choose research rules separately.</p>
+    <div class="form-grid"><label>Configured bot<select name="botId" required>${(localHistoryState?.bots ?? []).map(bot => `<option value="${esc(bot.id)}">${esc(bot.name)} · ${esc(bot.symbol)}</option>`).join('')}</select></label>
+    <label>NSE ticker<input name="symbol" required maxlength="40" value="${esc(localHistoryState?.bots[0]?.symbol ?? '')}" placeholder="INFY"></label>
+    <label>Last calendar days<select name="days">${Array.from({ length: 7 }, (_, i) => `<option value="${i + 1}"${i === 6 ? ' selected' : ''}>${i + 1}</option>`).join('')}</select></label></div>
+    <div class="actions"><button type="submit" class="button secondary" ${busy || !localHistoryState?.bots.length ? 'disabled' : ''}>Download history</button>
+    ${button('local-saved-history', 'Use saved history')}</div>
+    <p id="local-history-status" class="form-help" role="status">${localHistoryState ? 'Local desk ready. Downloads require a configured bot and broker login; they replace the latest saved history, not the paper portfolio.' : 'Connecting to the local desk…'}</p>
+    </form></details>`;
+}
+async function useLocalHistory(load) {
+  if (busy) throw new Error('Wait for the current operation first.');
+  const revision = cancellation;
+  busy = true; refreshQuickForm();
+  const form = $('#local-history-form');
+  for (const control of form.elements) control.disabled = true;
+  const status = $('#local-history-status');
+  status.textContent = 'Loading local candles…';
+  try {
+    const data = await load();
+    if (revision !== cancellation) throw new Error('Local history load cancelled. No browser dataset saved.');
+    loaded.set(data.id, data);
+    const { bars, ...info } = data;
+    metadata = metadata.filter(item => item.id !== data.id).concat(info);
+    try { await saveDataset(data); } catch (error) { storageError(error); }
+    refreshQuickForm(); $('#quick-dataset').value = data.id; setQuickDates();
+    status.textContent = `${data.symbol}: ${data.count} candles loaded. Choose your entry and exit rules below. Missing or zero-volume minutes block affected runs.`;
+  } catch (error) {
+    status.textContent = error.message;
+    throw error;
+  } finally {
+    busy = false;
+    for (const control of form.elements) control.disabled = false;
+    form.querySelector('button[type="submit"]').disabled = !localHistoryState?.bots.length;
+    refreshQuickForm();
+  }
 }
 function savedRuns() {
   return `${table(['Strategy', 'Ticker / dates', 'Return', 'Actions'], reports.map(report => [esc(report.strategies.map(b => b.name).join(', ')), report.datasets.map(d => `${esc(d.symbol)}<small>${d.from} to ${d.through}</small>`).join(''), pct(report.summary.returnPct), `${button('view-report', 'View', report.id)} ${button('delete-report', 'Remove', report.id)}`]))}${workspace.replay ? `<div class="actions">${button('resume', 'Resume saved replay')}</div>` : ''}`;
@@ -660,6 +702,7 @@ async function handleClick(target) {
   const action = target.dataset.action, id = target.dataset.id;
   if (!action) return;
   if (busy && action !== 'cancel-operation') throw new Error('Wait for the current operation or cancel it first.');
+  if (action === 'local-saved-history' && localBacktest) { await useLocalHistory(() => localBacktest.savedHistory()); return; }
   if (['datasets', 'replay', 'bots', 'settings', 'privacy'].includes(action)) { navigate(action); return; }
   if (action === 'create' || action === 'edit') { editBot(id); return; }
   if (action === 'suggest-inputs') {
@@ -863,6 +906,9 @@ document.addEventListener('input', event => {
 document.addEventListener('change', event => {
   void (async () => {
     const node = event.target;
+    if (node.name === 'botId' && node.form?.id === 'local-history-form') {
+      node.form.elements.symbol.value = localHistoryState?.bots.find(bot => bot.id === node.value)?.symbol ?? '';
+    }
     if (node.id === 'replay-speed') replaySpeed = +node.value;
     if (node.id === 'csv-file') {
       const revision = ++importRevision;
@@ -909,7 +955,10 @@ document.addEventListener('change', event => {
 document.addEventListener('submit', event => {
   event.preventDefault(); const form = event.target;
   void (async () => {
-    if (form.getAttribute('id') === 'bot-form') {
+    if (form.getAttribute('id') === 'local-history-form' && localBacktest) {
+      const { botId, symbol, days } = Object.fromEntries(new FormData(form));
+      await useLocalHistory(() => localBacktest.download({ botId, symbol, days: +days }));
+    } else if (form.getAttribute('id') === 'bot-form') {
       try {
         await waitForSuggestedInputs(form);
         const values = Object.fromEntries(new FormData(form)), data = metadata.find(d => d.id === values.datasetId);
@@ -956,10 +1005,20 @@ document.addEventListener('submit', event => {
 });
 try {
   const [saved, data, runs] = await Promise.all([storageAction('workspace', 'get', 'current'), storageAction('datasetMeta', 'getAll'), storageAction('reportMeta', 'getAll')]);
-  if (saved) { validateRisk(saved.risk); workspace = saved; }
+  if (saved) { validateRisk(saved.risk); workspace = saved; savedWorkspaceLoaded = true; }
   metadata = data; reports = runs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 } catch (error) { storageError(error); }
 render(); track('page_view', page);
+if (localBacktest) {
+  try {
+    localHistoryState = await localBacktest.initialize();
+    if (!savedWorkspaceLoaded) {
+      validateRisk(localHistoryState.risk); workspace.risk = localHistoryState.risk;
+    }
+    $('#local-history-panel').outerHTML = localHistoryControls();
+    refreshQuickForm();
+  } catch (error) { $('#local-history-status').textContent = error.message; toast(error.message, true); }
+}
 try {
   const response = await fetch(new URL('./bundles/manifest.json', import.meta.url));
   if (!response.ok) throw new Error('Bundled dataset manifest could not be loaded.');

@@ -13,7 +13,7 @@ test('static build is an allowlist, subpath safe, and has no backend/session art
     return output;
   }
   const published = await files('dist-demo');
-  assert.equal(published.length, 18);
+  assert.equal(published.length, 19);
   assert.ok(published.every(path => !/server|private|session|\.env|sqlite|TEST-FIXTURE/.test(path)));
   const index = await readFile('dist-demo/index.html', 'utf8');
   assert.doesNotMatch(index, /(?:src|href)="\//);
@@ -37,5 +37,6 @@ test('static build is an allowlist, subpath safe, and has no backend/session art
   assert.doesNotMatch(await readFile('dist-demo/styles.css', 'utf8'), /url\("\/fonts/);
   assert.doesNotMatch(await readFile('dist-demo/demo/app.js', 'utf8'), /\/api\/|smartapi\/login/);
   assert.match(await readFile('dist-demo/demo/config.js', 'utf8'), /"enabled":false/);
+  assert.equal(await readFile('dist-demo/demo/runtime.js', 'utf8'), 'export const localBacktest = null;\n');
   assert.throws(() => execFileSync(process.execPath, ['scripts/build-demo.js'], { env: { ...process.env, DEMO_GA_MEASUREMENT_ID: 'G-TEST123', DEMO_GA_DEPLOYMENT_REVIEWED: '' }, stdio: 'pipe' }), /Command failed/);
 });

@@ -12,6 +12,18 @@ import { createBacktest, sessionDates, createBotBacktest, historyDates } from '.
 import { executionWindow } from './market-calendar.js';
 
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
+const researchAssets = new Map([
+  ['/backtest/', ['../demo/index.html', 'text/html']],
+  ['/backtest/rulebook.html', ['../demo/rulebook.html', 'text/html']],
+  ['/backtest/demo/runtime.js', ['local-backtest.js', 'text/javascript']],
+  ['/backtest/shared/signals.js', ['../shared/signals.js', 'text/javascript']]
+]);
+for (const name of ['app.js', 'data.js', 'defaults.js', 'engine.js', 'worker.js', 'storage.js', 'analytics.js', 'config.js', 'demo.css']) {
+  researchAssets.set(`/backtest/demo/${name}`, [`../demo/${name}`, name.endsWith('.css') ? 'text/css' : 'text/javascript']);
+}
+for (const [name, mime] of [['theme.js', 'text/javascript'], ['styles.css', 'text/css'], ['favicon.svg', 'image/svg+xml']]) {
+  researchAssets.set(`/backtest/${name}`, [name, mime]);
+}
 const assets = new Map([['/', ['index.html', 'text/html']], ['/app.js', ['app.js', 'text/javascript']], ['/styles.css', ['styles.css', 'text/css']], ['/favicon.svg', ['favicon.svg', 'image/svg+xml']]]);
 assets.set('/theme.js', ['theme.js', 'text/javascript']);
 assets.set('/fonts/Silkscreen-Regular.ttf', ['fonts/Silkscreen-Regular.ttf', 'font/ttf']);
@@ -289,6 +301,25 @@ export function createApp(store, broker, { now = () => Date.now(), smartapi = ne
           store.event('warn', input.active ? 'Emergency entry lock enabled. Existing positions were NOT flattened.' : 'Entry lock released. Bots remain paused until you start them.');
         });
         return json(200, { active: input.active });
+      }
+      if (req.method === 'GET' && url.pathname === '/backtest') {
+        res.writeHead(308, { Location: '/backtest/' }); return res.end();
+      }
+      if (req.method === 'GET' && url.pathname === '/backtest/demo/bundles/manifest.json') {
+        return json(200, { version: 1, datasets: [] });
+      }
+      if (req.method === 'GET' && researchAssets.has(url.pathname)) {
+        const [file, mime] = researchAssets.get(url.pathname);
+        let content = await readFile(`${publicDir}${file}`);
+        if (url.pathname === '/backtest/') {
+          content = content.toString().replace('Historical demo', 'Local backtester')
+            .replace('<title>TradeGrok | Try the local trading desk</title>', '<title>TradeGrok | Local backtester</title>')
+            .replace('href="https://github.com/shubhankarsharma00/TradeGrok/blob/main/README.md"', 'href="/#backtest"')
+            .replace('Run locally ↗', 'Saved-bot backtest')
+            .replace('class="brand" href="./"', 'class="brand" href="/"');
+        }
+        res.writeHead(200, { 'Content-Type': `${mime}; charset=utf-8` });
+        return res.end(content);
       }
       if (req.method === 'GET' && assets.has(url.pathname)) {
         const [file, mime] = assets.get(url.pathname);
