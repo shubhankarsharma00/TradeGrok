@@ -4,7 +4,11 @@
 
 A local-first trading desk for Indian markets. Connect Angel One SmartAPI, view your real holdings separately, and test transparent entry and exit rules in a paper portfolio with shared risk limits.
 
+**Try it online: [TradeGrok interactive demo](https://tradegrok.pages.dev).** Explore how trading bots work and how entry rules, exits, fees and risk limits can affect simulated results. Choose a stock, run a backtest and replay its trades; no sign-in or CSV upload is needed. The bundled August–October 2026 datasets are labeled synthetic demo data, not verified real market history. Simulated results do not predict real trading performance.
+
 **Static demo:** run `npm run demo:build` and `npm run demo:serve` for a browser-only preview of the local trading desk: choose candles, try a preset or custom rules, backtest, then replay the trades. CSV uploads and saved work stay in the browser; advanced controls are secondary, not separate dashboard pages. Deploy only `dist-demo/`; no backend or broker login is needed by visitors. See [static demo setup, data export and analytics](docs/static-demo.md). After a complete local export, `npm run demo:serve -- --private-data` makes the ten-stock August–October 2026 snapshot available locally without including it in the public build. Public bundling still requires redistribution permission.
+
+The public demo bundles ten **Synthetic demo data** datasets for August–October 2026, ready to select without uploading a CSV. These are not verified real market history; private real-data exports remain separate.
 
 > **Paper execution only.** TradeGrok cannot place, modify or cancel broker orders. There is no live-trading switch. This is an experimental strategy-testing tool, not financial advice or a promise of returns.
 
