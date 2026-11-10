@@ -18,8 +18,8 @@ test('static build is an allowlist, subpath safe, and has no backend/session art
   const index = await readFile('dist-demo/index.html', 'utf8');
   assert.doesNotMatch(index, /(?:src|href)="\//);
   assert.match(index, /class="skip-link" href="#main"/);
-  assert.match(index, /TradeGrok#quick-start/);
-  assert.match(index, /href="\.\/rulebook\.html" target="_blank" rel="noopener noreferrer"/);
+  assert.match(index, /class="button secondary small" href="https:\/\/github\.com\/shubhankarsharma00\/TradeGrok\/blob\/main\/README\.md" target="_blank" rel="noopener noreferrer">Run locally/);
+  assert.match(index, /class="button secondary small" href="\.\/rulebook\.html" target="_blank" rel="noopener noreferrer"/);
   assert.match(index, /href="\.\/rulebook\.html#custom-rules"/);
   const rulebook = await readFile('dist-demo/rulebook.html', 'utf8');
   assert.doesNotMatch(rulebook, /(?:src|href)="\/|demo\/app\.js|\/api\//);
