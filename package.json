@@ -6,6 +6,12 @@
   "description": "Local Angel One dashboard and paper strategy runner",
   "engines": { "node": ">=24.0.0" },
   "scripts": {
+    "demo:build": "node scripts/build-demo.js",
+    "demo:serve": "node scripts/serve-demo.js",
+    "demo:export": "node --env-file-if-exists=.env scripts/export-demo.js",
+    "demo:publish-data": "node scripts/publish-demo-data.js",
+    "test:demo": "node --test tests/demo*.test.js",
+    "check:demo": "node scripts/check-demo.js",
     "start": "node --env-file-if-exists=.env server/index.js",
     "start:azure": "node server/azure.js",
     "dev": "node --watch --env-file-if-exists=.env server/index.js",
