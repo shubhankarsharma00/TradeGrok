@@ -39,6 +39,22 @@ ticker, at one-minute intervals, at most 100 MiB. Any date range is allowed.
 Recognized columns are mapped automatically; expand the preview to change them.
 Available bundled candles are loaded on demand from the same selector.
 
+The public demo includes ten **Synthetic demo data** datasets covering August–October
+2026. These publisher-supplied candles are not verified real market history.
+Their source remains labeled in the selector, dataset notice and report provenance.
+The original CSVs are retained unchanged; replay excludes bars outside its declared
+continuous-session window.
+
+To republish a complete set of synthetic CSVs with explicit publication permission:
+
+```sh
+npm run demo:publish-data -- --synthetic /path/to/csvs "publication permission reference"
+npm run demo:build
+```
+
+This mode validates all ten allowlisted stocks before copying any files. It does
+not bypass the separate real-export redistribution checks described below.
+
 ```csv
 timestamp,open,high,low,close,volume
 ```
@@ -252,4 +268,5 @@ npm run check:demo
 npm test
 ```
 
-Test fixtures are clearly synthetic and never bundled as market data.
+Test fixtures are clearly synthetic and never bundled as real market data.
+Public synthetic bundles are explicitly labeled and separate from test fixtures.

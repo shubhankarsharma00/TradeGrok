@@ -282,6 +282,24 @@ test('quick setup surfaces calendar exceptions, including within a supported yea
   assert.equal(elements.unverified.required, false);
 });
 
+test('synthetic bundles retain their identity after browser caching and in report inputs', async () => {
+  const { elements, context, run } = fixture();
+  const bars = Array.from({ length: 360 }, (_, minute) => [data.atMinute('2026-08-03', 555 + minute), 100, 101, 99, 100, 1000]);
+  const sha256 = await data.checksum(bars);
+  context.fetch = async () => new Response(data.candlesCsv(bars));
+  context.saveDataset = async () => {};
+  context.parsed = { bars, sha256 };
+  context.bundle = { symbol: 'RELIANCE', from: '2026-08-03', through: '2026-08-03', status: 'available', sha256, synthetic: true, source: 'Synthetic demo data; not real market history' };
+  run('metadata = []; loaded.clear(); bundles = [bundle]; oneOff = async () => parsed');
+  elements.datasetId.value = 'bundle:RELIANCE';
+  elements.through.value = '2026-08-03';
+  const config = await run('quickConfig()');
+  assert.match(config.datasets[0].name, /Synthetic demo data · Aug–Oct 2026/);
+  assert.match(config.datasets[0].source, /not real market history/);
+  assert.equal(config.datasets[0].synthetic, true);
+  assert.match(run('metadata[0].name'), /Synthetic demo data/);
+});
+
 test('private snapshots require an explicit local manifest and a loopback host', () => {
   const { context, run } = fixture();
   context.manifest = {

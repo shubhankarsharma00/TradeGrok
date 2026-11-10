@@ -13,7 +13,11 @@ test('static build is an allowlist, subpath safe, and has no backend/session art
     return output;
   }
   const published = await files('dist-demo');
-  assert.equal(published.length, 18);
+  const manifest = JSON.parse(await readFile('dist-demo/demo/bundles/manifest.json', 'utf8'));
+  assert.equal(published.length, 18 + manifest.datasets.length);
+  for (const meta of manifest.datasets) {
+    assert.ok(published.includes(join('dist-demo/demo/bundles', meta.file)));
+  }
   assert.ok(published.every(path => !/server|private|session|\.env|sqlite|TEST-FIXTURE/.test(path)));
   const index = await readFile('dist-demo/index.html', 'utf8');
   assert.doesNotMatch(index, /(?:src|href)="\//);

@@ -361,7 +361,7 @@ function availableBundles(manifest) {
 function refreshQuickForm() {
   const select = $('#quick-dataset'), previous = select.value, previousData = selectedData();
   const available = bundles.filter(data => data.status === 'available' && !metadata.some(local => local.sha256 === data.sha256 && local.symbol === data.symbol));
-  const markup = metadata.map(data => `<option value="${esc(data.id)}">${esc(data.symbol)} · ${esc(data.name)}</option>`).join('') + available.map(data => `<option value="bundle:${esc(data.symbol)}">${esc(data.symbol)} · ${data.localOnly ? 'local snapshot' : 'bundled'}</option>`).join('');
+  const markup = metadata.map(data => `<option value="${esc(data.id)}">${esc(data.symbol)} · ${esc(data.name)}</option>`).join('') + available.map(data => `<option value="bundle:${esc(data.symbol)}">${esc(data.symbol)} · ${data.synthetic ? 'Synthetic demo data · Aug–Oct 2026' : data.localOnly ? 'local snapshot' : 'bundled'}</option>`).join('');
   if (select.dataset.options !== markup) {
     select.innerHTML = markup || '<option value="">Upload a CSV to start</option>'; select.dataset.options = markup;
     const equivalent = metadata.find(data => data.symbol === previousData?.symbol && data.sha256 === previousData?.sha256);
@@ -374,7 +374,7 @@ function refreshQuickForm() {
   if (saved.dataset.options !== savedMarkup) { saved.innerHTML = savedMarkup; saved.dataset.options = savedMarkup; saved.value = selected; }
   $('#saved-strategy-label').hidden = !workspace.strategies.length;
   const data = selectedData();
-  $('#data-note').textContent = data ? `${data.localOnly ? 'Private local snapshot · ' : ''}${data.from} to ${data.through} · One-minute candles${data.adjustment === 'adjusted' ? '' : ` · ${data.adjustment === 'unadjusted' ? 'Unadjusted' : 'Adjustments unknown'}; splits/dividends may affect results`}` : 'Bundled candles are not available yet. Upload your own CSV to start.';
+  $('#data-note').textContent = data ? `${data.synthetic ? 'Synthetic demo data; not real market history · ' : data.localOnly ? 'Private local snapshot · ' : ''}${data.from} to ${data.through} · One-minute candles${data.adjustment === 'adjusted' ? '' : ` · ${data.adjustment === 'unadjusted' ? 'Unadjusted' : 'Adjustments unknown'}; splits/dividends may affect results`}` : 'Bundled candles are not available yet. Upload your own CSV to start.';
   for (const name of ['from', 'through']) form.elements[name].disabled = !data;
   $('#run-backtest').disabled = busy || !selectedData();
   $('#quick-inputs').disabled = busy;
@@ -581,7 +581,7 @@ async function loadBundle(symbol) {
     if (parsed.sha256 !== meta.sha256) throw new Error('Bundled CSV checksum mismatch.');
     const check = coverage(parsed.bars, { from: meta.from, through: meta.through });
     if (check.issues.length) throw new Error(`Bundled CSV coverage blocked: ${check.issues[0]}`);
-    const value = { ...meta, ...parsed, id, name: `${meta.symbol}.csv`, count: parsed.bars.length };
+    const value = { ...meta, ...parsed, id, name: `${meta.symbol}${meta.synthetic ? ' · Synthetic demo data · Aug–Oct 2026' : '.csv'}`, count: parsed.bars.length };
     loaded.set(value.id, value);
     const { bars, ...info } = value; metadata = metadata.filter(data => data.id !== info.id).concat(info);
     try { await saveDataset(value); } catch (error) { storageError(error); }
